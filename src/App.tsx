@@ -1,9 +1,11 @@
+import { LapAnalysis } from "@/components/LapAnalysis";
+
 export function App() {
   return (
-    <div className="flex items-center justify-center min-h-screen">
-      <div className="font-medium">Hello World</div>
+    <div className="dark">
+      <LapAnalysis />
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
