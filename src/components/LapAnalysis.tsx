@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import { readIbtHeader, readIbtSamples, readIbtVarHeaders, type IbtValue } from "@/lib/ibt"
+import { readIbtHeader, readIbtSamples, readIbtVarHeaders, readIbtSessionInfoYaml, type IbtValue } from "@/lib/ibt"
 import {
   AreaChart,
   Area,
@@ -35,108 +35,208 @@ import {
 
 
 // Track SVG path - realistic racing circuit
-function TrackMap() {
-  // Track outline path (scaled and centered)
-  const trackPath = `
-    M 50 120
-    C 72 70, 95 50, 130 45
-    C 165 40, 200 55, 230 75
-    C 260 95, 280 120, 290 150
-    C 300 180, 295 210, 275 235
-    C 255 260, 220 275, 180 280
-    C 140 285, 100 275, 70 255
-    C 40 235, 25 200, 30 165
-    C 35 130, 45 115, 50 120
-    M 180 280
-    C 200 270, 230 250, 260 220
-    C 290 190, 320 150, 340 120
-    C 360 90, 370 70, 365 55
-    C 360 40, 340 35, 315 40
-    C 290 45, 260 60, 230 75
-  `
-  
-  // Simplified racing line path that follows the track
-  const racingLinePath = `
-    M 55 125
-    C 75 80, 100 55, 135 50
-    C 170 45, 205 60, 235 80
-    C 265 100, 285 125, 295 155
-    C 305 185, 300 215, 280 240
-    C 255 270, 215 285, 175 288
-    C 135 290, 95 280, 65 258
-    C 35 235, 22 195, 28 160
-    C 34 125, 48 112, 55 125
-    M 175 288
-    C 198 276, 232 252, 265 218
-    C 298 184, 328 145, 348 112
-    C 368 79, 375 60, 368 48
-    C 358 36, 335 32, 308 38
-    C 280 44, 248 62, 235 80
-  `
+function TrackMap({
+  lapDataByLap,
+  selectedLaps,
+  lapColors,
+  cursorDistance,
+}: {
+  lapDataByLap: Record<number, IbtLapData> | null
+  selectedLaps: number[]
+  lapColors: Record<number, string>
+  cursorDistance: number | null
+}) {
+  // Calculate bounds from all selected laps
+  const bounds = useMemo(() => {
+    if (!lapDataByLap || selectedLaps.length === 0) return null
+    
+    let minLat = Infinity
+    let maxLat = -Infinity
+    let minLon = Infinity
+    let maxLon = -Infinity
+    
+    for (const lap of selectedLaps) {
+      const lapData = lapDataByLap[lap]
+      if (!lapData) continue
+      
+      for (const p of lapData.byDist) {
+        if (p.lat != null && p.lon != null) {
+          minLat = Math.min(minLat, p.lat)
+          maxLat = Math.max(maxLat, p.lat)
+          minLon = Math.min(minLon, p.lon)
+          maxLon = Math.max(maxLon, p.lon)
+        }
+      }
+    }
+    
+    if (!Number.isFinite(minLat)) return null
+    
+    return { minLat, maxLat, minLon, maxLon }
+  }, [lapDataByLap, selectedLaps])
+
+  // Convert GPS coordinates to SVG coordinates
+  const gpsToSvg = useCallback((lat: number, lon: number): { x: number; y: number } | null => {
+    if (!bounds) return null
+    
+    const latRange = bounds.maxLat - bounds.minLat || 0.001
+    const lonRange = bounds.maxLon - bounds.minLon || 0.001
+    
+    const padding = 20
+    const width = 400 - padding * 2
+    const height = 320 - padding * 2
+    
+    const x = padding + ((lon - bounds.minLon) / lonRange) * width
+    const y = padding + ((bounds.maxLat - lat) / latRange) * height // Invert Y axis
+    
+    return { x, y }
+  }, [bounds])
+
+  // Convert GPS coordinates to SVG path
+  const gpsToSvgPath = useCallback((points: IbtLapPoint[]): string => {
+    const validPoints = points.filter((p) => p.lat != null && p.lon != null)
+    if (validPoints.length === 0) return ""
+
+    const pathParts: string[] = []
+    let first = true
+
+    for (const p of validPoints) {
+      const svgPos = gpsToSvg(p.lat!, p.lon!)
+      if (!svgPos) continue
+
+      if (first) {
+        pathParts.push(`M ${svgPos.x.toFixed(2)} ${svgPos.y.toFixed(2)}`)
+        first = false
+      } else {
+        pathParts.push(`L ${svgPos.x.toFixed(2)} ${svgPos.y.toFixed(2)}`)
+      }
+    }
+
+    return pathParts.join(" ")
+  }, [gpsToSvg])
+
+  // Generate paths for selected laps
+  const lapPaths = useMemo(() => {
+    if (!lapDataByLap || selectedLaps.length === 0) return []
+    return selectedLaps.map((lap) => {
+      const lapData = lapDataByLap[lap]
+      if (!lapData) return null
+      const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
+      const path = gpsToSvgPath(lapData.byDist)
+      return { lap, path, color, lapData }
+    }).filter((p): p is { lap: number; path: string; color: string; lapData: IbtLapData } => p != null && p.path !== "")
+  }, [lapDataByLap, selectedLaps, lapColors, gpsToSvgPath])
+
+  // Calculate cursor positions for each lap
+  const cursorPositions = useMemo(() => {
+    if (cursorDistance == null || !lapDataByLap || selectedLaps.length === 0 || !bounds) return []
+    
+    return selectedLaps.map((lap) => {
+      const lapData = lapDataByLap[lap]
+      if (!lapData) return null
+      
+      // Check if cursor distance is within lap bounds
+      const minDist = lapData.byDist[0]?.distanceKm ?? 0
+      const maxDist = lapData.byDist[lapData.byDist.length - 1]?.distanceKm ?? 0
+      if (cursorDistance < minDist || cursorDistance > maxDist) return null
+      
+      // Interpolate GPS coordinates at cursor distance
+      const lat = interpolateValue(lapData.byDist, cursorDistance, "distanceKm", (p) => p.lat)
+      const lon = interpolateValue(lapData.byDist, cursorDistance, "distanceKm", (p) => p.lon)
+      
+      if (lat == null || lon == null) return null
+      
+      const svgPos = gpsToSvg(lat, lon)
+      if (!svgPos) return null
+      
+      const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
+      return { lap, x: svgPos.x, y: svgPos.y, color }
+    }).filter((p): p is { lap: number; x: number; y: number; color: string } => p != null)
+  }, [cursorDistance, lapDataByLap, selectedLaps, lapColors, bounds, gpsToSvg])
+
+  // Fallback to mock track if no GPS data
+  if (lapPaths.length === 0) {
+    const trackPath = `
+      M 50 120
+      C 72 70, 95 50, 130 45
+      C 165 40, 200 55, 230 75
+      C 260 95, 280 120, 290 150
+      C 300 180, 295 210, 275 235
+      C 255 260, 220 275, 180 280
+      C 140 285, 100 275, 70 255
+      C 40 235, 25 200, 30 165
+      C 35 130, 45 115, 50 120
+      M 180 280
+      C 200 270, 230 250, 260 220
+      C 290 190, 320 150, 340 120
+      C 360 90, 370 70, 365 55
+      C 360 40, 340 35, 315 40
+      C 290 45, 260 60, 230 75
+    `
+    return (
+      <svg viewBox="0 0 400 320" className="w-full h-full" preserveAspectRatio="xMidYMid meet">
+        <path d={trackPath} fill="none" stroke="#2a2a2a" strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={trackPath} fill="none" stroke="#1a1a1a" strokeWidth="24" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={trackPath} fill="none" stroke="#333" strokeWidth="26" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 8" />
+      </svg>
+    )
+  }
 
   return (
-    <svg viewBox="0 0 400 320" className="w-full h-full max-h-[320px]">
-      {/* Track background/outline */}
-      <path 
-        d={trackPath} 
-        fill="none" 
-        stroke="#2a2a2a" 
-        strokeWidth="28" 
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* Track surface */}
-      <path 
-        d={trackPath} 
-        fill="none" 
-        stroke="#1a1a1a" 
-        strokeWidth="24" 
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* Track edge markings */}
-      <path 
-        d={trackPath} 
-        fill="none" 
-        stroke="#333" 
-        strokeWidth="26" 
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeDasharray="4 8"
-      />
+    <svg viewBox="0 0 400 320" className="w-full h-full" preserveAspectRatio="xMidYMid meet">
+      {/* Render racing lines for each selected lap */}
+      {lapPaths.map(({ lap, path, color }) => (
+        <path
+          key={lap}
+          d={path}
+          fill="none"
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity="0.9"
+        />
+      ))}
       
-      {/* Lap 1 racing line - Red */}
-      <path 
-        d={racingLinePath} 
-        fill="none" 
-        stroke="#e63946" 
-        strokeWidth="2.5" 
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.9"
-      />
-      {/* Lap 2 racing line - Blue (slightly offset) */}
-      <path 
-        d={racingLinePath} 
-        fill="none" 
-        stroke="#457b9d" 
-        strokeWidth="2.5" 
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.9"
-        transform="translate(2, 1)"
-      />
-      {/* Lap 3 racing line - Purple (slightly offset other direction) */}
-      <path 
-        d={racingLinePath} 
-        fill="none" 
-        stroke="#9d4edd" 
-        strokeWidth="2.5" 
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.9"
-        transform="translate(-2, -1)"
-      />
+      {/* Render cursor dots for each lap - synchronized with chart cursors */}
+      {cursorPositions.map(({ lap, x, y, color }) => (
+        <g key={`cursor-${lap}`} style={{ pointerEvents: "none" }}>
+          {/* Outer glow ring */}
+          <circle
+            cx={x}
+            cy={y}
+            r="10"
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            opacity="0.4"
+          />
+          {/* Middle glow */}
+          <circle
+            cx={x}
+            cy={y}
+            r="7"
+            fill={color}
+            opacity="0.2"
+          />
+          {/* Main dot with white border */}
+          <circle
+            cx={x}
+            cy={y}
+            r="6"
+            fill={color}
+            stroke="#ffffff"
+            strokeWidth="2.5"
+          />
+          {/* Inner highlight */}
+          <circle
+            cx={x}
+            cy={y}
+            r="3"
+            fill="#ffffff"
+            opacity="0.8"
+          />
+        </g>
+      ))}
     </svg>
   )
 }
@@ -484,6 +584,19 @@ type IbtLapPoint = {
   gear: number | null
   rpm: number | null
   steeringDeg: number | null
+  lat: number | null
+  lon: number | null
+}
+
+type SectorBoundary = {
+  sectorNum: number
+  startPct: number
+}
+
+type SectorTimes = {
+  sectorNum: number
+  timeSec: number
+  distanceKm: number
 }
 
 type IbtLapData = {
@@ -492,6 +605,7 @@ type IbtLapData = {
   lapTimeSec: number
   distanceKm: number
   points: number
+  sectorTimes: SectorTimes[]
 }
 
 const LAP_COLOR_PALETTE = [
@@ -520,6 +634,100 @@ function formatDeltaSeconds(deltaSec: number) {
   if (!Number.isFinite(deltaSec)) return "—"
   const sign = deltaSec >= 0 ? "+" : "-"
   return `${sign}${Math.abs(deltaSec).toFixed(3)}s`
+}
+
+function formatSectorTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—"
+  return `${seconds.toFixed(3)}s`
+}
+
+// Simple YAML parser for sector boundaries
+function parseSectorBoundaries(yaml: string): SectorBoundary[] {
+  const sectors: SectorBoundary[] = []
+  const lines = yaml.split("\n")
+  let inSectors = false
+  let indentLevel = 0
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.includes("Sectors:")) {
+      inSectors = true
+      indentLevel = line.match(/^(\s*)/)?.[1]?.length ?? 0
+      continue
+    }
+    
+    if (inSectors) {
+      const currentIndent = line.match(/^(\s*)/)?.[1]?.length ?? 0
+      if (currentIndent <= indentLevel && line.trim() && !line.includes("-")) {
+        break // Exited sectors section
+      }
+      
+      if (line.includes("SectorNum:")) {
+        const sectorNumMatch = line.match(/SectorNum:\s*(\d+)/)
+        const startPctMatch = lines[i + 1]?.match(/SectorStartPct:\s*([\d.]+)/)
+        
+        if (sectorNumMatch && startPctMatch) {
+          sectors.push({
+            sectorNum: parseInt(sectorNumMatch[1], 10),
+            startPct: parseFloat(startPctMatch[1]),
+          })
+        }
+      }
+    }
+  }
+  
+  // Sort by sector number and ensure we have sector 0 (start/finish)
+  sectors.sort((a, b) => a.sectorNum - b.sectorNum)
+  if (sectors.length === 0 || sectors[0]!.sectorNum !== 0) {
+    sectors.unshift({ sectorNum: 0, startPct: 0 })
+  }
+  
+  return sectors
+}
+
+// Calculate sector times for a lap
+function calculateSectorTimes(
+  lapData: IbtLapData,
+  sectorBoundaries: SectorBoundary[],
+): SectorTimes[] {
+  const sectorTimes: SectorTimes[] = []
+  
+  if (sectorBoundaries.length === 0) return sectorTimes
+  
+  for (let i = 0; i < sectorBoundaries.length; i++) {
+    const boundary = sectorBoundaries[i]!
+    const sectorDistKm = (boundary.startPct * lapData.distanceKm) / 100
+    
+    // Find the time at this distance
+    const timeAtDist = interpolateValue(
+      lapData.byDist,
+      sectorDistKm,
+      "distanceKm",
+      (p) => p.timeSec,
+    )
+    
+    if (timeAtDist != null) {
+      sectorTimes.push({
+        sectorNum: boundary.sectorNum,
+        timeSec: timeAtDist,
+        distanceKm: sectorDistKm,
+      })
+    }
+  }
+  
+  // Calculate actual sector times (time difference between boundaries)
+  const actualSectorTimes: SectorTimes[] = []
+  for (let i = 0; i < sectorTimes.length; i++) {
+    const prev = i > 0 ? sectorTimes[i - 1] : { timeSec: 0, distanceKm: 0 }
+    const curr = sectorTimes[i]!
+    actualSectorTimes.push({
+      sectorNum: curr.sectorNum,
+      timeSec: curr.timeSec - prev.timeSec,
+      distanceKm: curr.distanceKm - prev.distanceKm,
+    })
+  }
+  
+  return actualSectorTimes
 }
 
 function binarySearchLowerBound(points: IbtLapPoint[], x: number, xKey: "distanceKm" | "timeSec") {
@@ -579,6 +787,7 @@ export function LapAnalysis() {
   const [ibtLoading, setIbtLoading] = useState(false)
   const [ibtProgress, setIbtProgress] = useState<{ processedRecords: number; totalRecords: number } | null>(null)
   const [ibtError, setIbtError] = useState<string | null>(null)
+  const [sectorBoundaries, setSectorBoundaries] = useState<SectorBoundary[]>([])
   
   // Zoom state (shared across all charts)
   const [zoomXMin, setZoomXMin] = useState<number | null>(null)
@@ -629,6 +838,11 @@ export function LapAnalysis() {
         const header = await readIbtHeader(blob)
         const vars = await readIbtVarHeaders(blob, header)
 
+        // Parse session YAML to extract sector boundaries
+        const sessionYaml = await readIbtSessionInfoYaml(blob, header)
+        const sectors = parseSectorBoundaries(sessionYaml)
+        setSectorBoundaries(sectors)
+
         const recordCount =
           header.diskSubHeader?.recordCount ??
           Math.floor((blob.size - (header.sessionInfoOffset + header.sessionInfoLen)) / header.bufLen)
@@ -648,6 +862,8 @@ export function LapAnalysis() {
             "Throttle",
             "Brake",
             "SteeringWheelAngle",
+            "Lat",
+            "Lon",
           ],
           stride,
           onProgress: (p) => setIbtProgress(p),
@@ -681,6 +897,8 @@ export function LapAnalysis() {
             gear: number | null
             rpm: number | null
             steeringDeg: number | null
+            lat: number | null
+            lon: number | null
           }> = []
 
           for (const r of lapRows) {
@@ -694,6 +912,8 @@ export function LapAnalysis() {
             const throttle = num(r["Throttle"])
             const brake = num(r["Brake"])
             const steerRad = num(r["SteeringWheelAngle"])
+            const lat = typeof r["Lat"] === "number" && Number.isFinite(r["Lat"]) ? r["Lat"] : null
+            const lon = typeof r["Lon"] === "number" && Number.isFinite(r["Lon"]) ? r["Lon"] : null
 
             raw.push({
               sessionTime,
@@ -704,6 +924,8 @@ export function LapAnalysis() {
               gear: gear != null ? gear : null,
               rpm: rpm != null ? rpm : null,
               steeringDeg: steerRad != null ? (steerRad * 180) / Math.PI : null,
+              lat,
+              lon,
             })
           }
 
@@ -722,6 +944,8 @@ export function LapAnalysis() {
               gear: p.gear,
               rpm: p.rpm,
               steeringDeg: p.steeringDeg,
+              lat: p.lat,
+              lon: p.lon,
             }))
             .filter((p) => Number.isFinite(p.distanceKm) && p.distanceKm >= 0 && Number.isFinite(p.timeSec) && p.timeSec >= 0)
 
@@ -732,12 +956,19 @@ export function LapAnalysis() {
           const lapTimeSec = Math.max(...byTime.map((p) => p.timeSec))
           const distanceKm = Math.max(...byDist.map((p) => p.distanceKm))
 
+          // Calculate sector times
+          const sectorTimes = calculateSectorTimes(
+            { byDist, byTime, lapTimeSec, distanceKm, points: points.length, sectorTimes: [] },
+            sectors,
+          )
+
           lapDataByLap[lap] = {
             byDist,
             byTime,
             lapTimeSec,
             distanceKm,
             points: points.length,
+            sectorTimes,
           }
         }
 
@@ -1197,13 +1428,60 @@ export function LapAnalysis() {
               </div>
             )}
 
-            {/* Sector times table with heatmap */}
-            <div className="space-y-1 text-xs">
-              {selectedLaps.length > 1 && ibtLapDataByLap ? (
-                <div className="text-muted-foreground text-[10px]">Sector analysis coming soon</div>
-              ) : (
-                <div className="text-muted-foreground text-[10px]">Select multiple laps to compare gaps</div>
-              )}
+            {/* Sector times table */}
+            <div className="space-y-1 text-xs" style={{ "--lap-count": selectedLaps.length } as React.CSSProperties}>
+              {selectedLaps.length > 0 && ibtLapDataByLap && sectorBoundaries.length > 0 ? (
+                <div className="space-y-2">
+                  {/* Header */}
+                  <div className="grid gap-1 text-[10px] text-muted-foreground border-b border-border pb-1" style={{ gridTemplateColumns: `60px repeat(${selectedLaps.length}, 1fr)` }}>
+                    <div>Sector</div>
+                    {selectedLaps.map((lap) => (
+                      <div key={lap} className="flex items-center gap-1 justify-center">
+                        <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: lapColors[lap] ?? LAP_COLOR_PALETTE[0] }} />
+                        <span>Lap {lap}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Sector rows */}
+                  {sectorBoundaries.slice(1).map((sector) => {
+                    const sectorNum = sector.sectorNum
+                    return (
+                      <div key={sectorNum} className="grid gap-1 text-[10px]" style={{ gridTemplateColumns: `60px repeat(${selectedLaps.length}, 1fr)` }}>
+                        <div className="font-medium">S{sectorNum}</div>
+                        {selectedLaps.map((lap) => {
+                          const lapData = ibtLapDataByLap[lap]
+                          const sectorTime = lapData?.sectorTimes.find((st) => st.sectorNum === sectorNum)
+                          const refLap = selectedLaps[0]
+                          const refData = ibtLapDataByLap[refLap]
+                          const refSectorTime = refData?.sectorTimes.find((st) => st.sectorNum === sectorNum)
+                          const delta = sectorTime && refSectorTime ? sectorTime.timeSec - refSectorTime.timeSec : null
+                          const isRef = lap === refLap
+                          return (
+                            <div key={lap} className={`text-center ${isRef ? "font-medium" : ""}`}>
+                              {sectorTime ? (
+                                <div>
+                                  <div>{formatSectorTime(sectorTime.timeSec)}</div>
+                                  {!isRef && delta != null && (
+                                    <div className={`text-[9px] ${delta >= 0 ? "text-red-400" : "text-green-400"}`}>
+                                      {delta >= 0 ? "+" : ""}{delta.toFixed(3)}s
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="text-muted-foreground">—</div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : selectedLaps.length === 0 ? (
+                <div className="text-muted-foreground text-[10px]">Select laps to compare sector times</div>
+              ) : sectorBoundaries.length === 0 ? (
+                <div className="text-muted-foreground text-[10px]">No sector data available</div>
+              ) : null}
             </div>
           </div>
         </aside>
@@ -1225,8 +1503,13 @@ export function LapAnalysis() {
                     <AlertTriangle className="h-4 w-4" />
                   </div>
                 </div>
-                <div className="mx-auto h-full max-w-md overflow-hidden">
-                  <TrackMap />
+                <div className="w-full h-full overflow-hidden">
+                  <TrackMap 
+                    lapDataByLap={ibtLapDataByLap} 
+                    selectedLaps={selectedLaps} 
+                    lapColors={lapColors}
+                    cursorDistance={cursorDistance}
+                  />
                 </div>
               </div>
 
@@ -1309,28 +1592,30 @@ export function LapAnalysis() {
             </div>
 
             {/* Right telemetry charts */}
-            <div className="w-96 border-l border-border overflow-y-auto overflow-x-hidden">
-              {/* Speed */}
-              <div className="relative h-28 border-b border-border overflow-hidden min-h-0 min-w-0">
-                <SyncedChart
-                  data={telemetryData}
-                  series={speedSeries}
-                  yDomain={[0, 250]}
-                  cursorDistance={cursorDistance}
-                  onCursorMove={handleCursorMove}
-                  unit=" km/h"
-                  formatValue={(v) => v.toFixed(1)}
-                  xMin={zoomXMin}
-                  xMax={zoomXMax}
-                  onZoomChange={handleZoomChange}
-                  originalXMax={originalXMax ?? undefined}
-                  chartRef={chartRef}
-                />
-                <div className="absolute right-12 top-2 text-[10px] text-muted-foreground pointer-events-none">Speed</div>
-              </div>
+            <div className="w-96 border-l border-border flex flex-col overflow-hidden">
+              {telemetryData.length > 0 && selectedLaps.length > 0 && ibtLapDataByLap ? (
+                <>
+                  {/* Speed */}
+                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
+                    <SyncedChart
+                      data={telemetryData}
+                      series={speedSeries}
+                      yDomain={[0, 250]}
+                      cursorDistance={cursorDistance}
+                      onCursorMove={handleCursorMove}
+                      unit=" km/h"
+                      formatValue={(v) => v.toFixed(1)}
+                      xMin={zoomXMin}
+                      xMax={zoomXMax}
+                      onZoomChange={handleZoomChange}
+                      originalXMax={originalXMax ?? undefined}
+                      chartRef={chartRef}
+                    />
+                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Speed</div>
+                  </div>
 
-              {/* Throttle */}
-              <div className="relative h-28 border-b border-border overflow-hidden min-h-0 min-w-0">
+                  {/* Throttle */}
+                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
                 <SyncedChart
                   data={telemetryData}
                   series={throttleSeries}
@@ -1345,84 +1630,90 @@ export function LapAnalysis() {
                   originalXMax={originalXMax ?? undefined}
                   chartRef={chartRef}
                 />
-                <div className="absolute right-12 top-2 text-[10px] text-muted-foreground pointer-events-none">Throttle</div>
-              </div>
+                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Throttle</div>
+                  </div>
 
-              {/* Brake */}
-              <div className="relative h-28 border-b border-border overflow-hidden min-h-0 min-w-0">
-                <SyncedChart
-                  data={telemetryData}
-                  series={brakeSeries}
-                  yDomain={[0, 100]}
-                  cursorDistance={cursorDistance}
-                  onCursorMove={handleCursorMove}
-                  unit="%"
-                  formatValue={(v) => v.toFixed(0)}
-                  xMin={zoomXMin}
-                  xMax={zoomXMax}
-                  onZoomChange={handleZoomChange}
-                  originalXMax={originalXMax ?? undefined}
-                  chartRef={chartRef}
-                />
-                <div className="absolute right-12 top-2 text-[10px] text-muted-foreground pointer-events-none">Brake</div>
-              </div>
+                  {/* Brake */}
+                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
+                    <SyncedChart
+                      data={telemetryData}
+                      series={brakeSeries}
+                      yDomain={[0, 100]}
+                      cursorDistance={cursorDistance}
+                      onCursorMove={handleCursorMove}
+                      unit="%"
+                      formatValue={(v) => v.toFixed(0)}
+                      xMin={zoomXMin}
+                      xMax={zoomXMax}
+                      onZoomChange={handleZoomChange}
+                      originalXMax={originalXMax ?? undefined}
+                      chartRef={chartRef}
+                    />
+                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Brake</div>
+                  </div>
 
-              {/* Gear */}
-              <div className="relative h-28 border-b border-border overflow-hidden min-h-0 min-w-0">
-                <SyncedChart
-                  data={telemetryData}
-                  series={gearSeries}
-                  yDomain={[0, 7]}
-                  cursorDistance={cursorDistance}
-                  onCursorMove={handleCursorMove}
-                  chartType="stepAfter"
-                  formatValue={(v) => v.toFixed(0)}
-                  xMin={zoomXMin}
-                  xMax={zoomXMax}
-                  onZoomChange={handleZoomChange}
-                  originalXMax={originalXMax ?? undefined}
-                  chartRef={chartRef}
-                />
-                <div className="absolute right-12 top-2 text-[10px] text-muted-foreground pointer-events-none">Gear</div>
-              </div>
+                  {/* Gear */}
+                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
+                    <SyncedChart
+                      data={telemetryData}
+                      series={gearSeries}
+                      yDomain={[0, 7]}
+                      cursorDistance={cursorDistance}
+                      onCursorMove={handleCursorMove}
+                      chartType="stepAfter"
+                      formatValue={(v) => v.toFixed(0)}
+                      xMin={zoomXMin}
+                      xMax={zoomXMax}
+                      onZoomChange={handleZoomChange}
+                      originalXMax={originalXMax ?? undefined}
+                      chartRef={chartRef}
+                    />
+                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Gear</div>
+                  </div>
 
-              {/* RPM */}
-              <div className="relative h-28 border-b border-border overflow-hidden min-h-0 min-w-0">
-                <SyncedChart
-                  data={telemetryData}
-                  series={rpmSeries}
-                  yDomain={[2000, 8000]}
-                  cursorDistance={cursorDistance}
-                  onCursorMove={handleCursorMove}
-                  unit=" rpm"
-                  formatValue={(v) => v.toFixed(0)}
-                  xMin={zoomXMin}
-                  xMax={zoomXMax}
-                  onZoomChange={handleZoomChange}
-                  originalXMax={originalXMax ?? undefined}
-                  chartRef={chartRef}
-                />
-                <div className="absolute right-12 top-2 text-[10px] text-muted-foreground pointer-events-none">RPM</div>
-              </div>
+                  {/* RPM */}
+                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
+                    <SyncedChart
+                      data={telemetryData}
+                      series={rpmSeries}
+                      yDomain={[2000, 8000]}
+                      cursorDistance={cursorDistance}
+                      onCursorMove={handleCursorMove}
+                      unit=" rpm"
+                      formatValue={(v) => v.toFixed(0)}
+                      xMin={zoomXMin}
+                      xMax={zoomXMax}
+                      onZoomChange={handleZoomChange}
+                      originalXMax={originalXMax ?? undefined}
+                      chartRef={chartRef}
+                    />
+                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">RPM</div>
+                  </div>
 
-              {/* Steering wheel angle */}
-              <div className="relative h-28 border-b border-border overflow-hidden min-h-0 min-w-0">
-                <SyncedChart
-                  data={telemetryData}
-                  series={steeringSeries}
-                  yDomain={[-200, 200]}
-                  cursorDistance={cursorDistance}
-                  onCursorMove={handleCursorMove}
-                  unit="°"
-                  formatValue={(v) => v.toFixed(1)}
-                  xMin={zoomXMin}
-                  xMax={zoomXMax}
-                  onZoomChange={handleZoomChange}
-                  originalXMax={originalXMax ?? undefined}
-                  chartRef={chartRef}
-                />
-                <div className="absolute right-12 top-2 text-[10px] text-muted-foreground whitespace-nowrap pointer-events-none">Steering wheel angle</div>
-              </div>
+                  {/* Steering wheel angle */}
+                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
+                    <SyncedChart
+                      data={telemetryData}
+                      series={steeringSeries}
+                      yDomain={[-200, 200]}
+                      cursorDistance={cursorDistance}
+                      onCursorMove={handleCursorMove}
+                      unit="°"
+                      formatValue={(v) => v.toFixed(1)}
+                      xMin={zoomXMin}
+                      xMax={zoomXMax}
+                      onZoomChange={handleZoomChange}
+                      originalXMax={originalXMax ?? undefined}
+                      chartRef={chartRef}
+                    />
+                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground whitespace-nowrap pointer-events-none">Steering wheel angle</div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                  Load a .ibt file to view telemetry charts
+                </div>
+              )}
             </div>
           </div>
 
