@@ -12,6 +12,7 @@ import {
   MessageSquare,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -20,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { readIbtHeader, readIbtSamples, readIbtVarHeaders, type IbtValue } from "@/lib/ibt"
 import {
   AreaChart,
   Area,
@@ -76,8 +78,7 @@ const generateTelemetryData = (points: number) => {
   return data
 }
 
-const telemetryData = generateTelemetryData(200)
-const MAX_DISTANCE = 5
+const mockTelemetryData = generateTelemetryData(200)
 
 // Lap data
 const laps = [
@@ -92,26 +93,6 @@ const sectorGaps = [
   { sector: "S2", lap1: "43.393", lap2: "-0.788s", lap2Color: "text-green-400", lap3: "+17.189s", lap3Color: "text-red-400" },
   { sector: "S3", lap1: "33.952", lap2: "-0.352s", lap2Color: "text-green-400", lap3: "+0.563s", lap3Color: "text-red-400" },
 ]
-
-// Interpolate values at a given distance
-function interpolateAtDistance(distance: number, dataKey: string): number {
-  if (distance <= 0) return telemetryData[0][dataKey as keyof typeof telemetryData[0]] as number
-  if (distance >= MAX_DISTANCE) return telemetryData[telemetryData.length - 1][dataKey as keyof typeof telemetryData[0]] as number
-  
-  const index = (distance / MAX_DISTANCE) * (telemetryData.length - 1)
-  const lowerIndex = Math.floor(index)
-  const upperIndex = Math.ceil(index)
-  const fraction = index - lowerIndex
-  
-  if (lowerIndex === upperIndex) {
-    return telemetryData[lowerIndex][dataKey as keyof typeof telemetryData[0]] as number
-  }
-  
-  const lowerValue = telemetryData[lowerIndex][dataKey as keyof typeof telemetryData[0]] as number
-  const upperValue = telemetryData[upperIndex][dataKey as keyof typeof telemetryData[0]] as number
-  
-  return lowerValue + (upperValue - lowerValue) * fraction
-}
 
 // Helper function to get heatmap color based on delta value
 function getHeatmapStyle(deltaString: string): string {
@@ -128,8 +109,6 @@ function getHeatmapStyle(deltaString: string): string {
   const intensity = Math.min(1, absValue / 10) // Max intensity at 10 seconds
   
   // Calculate opacity (30% to 70% based on intensity)
-  const opacity = Math.round(30 + intensity * 40)
-  
   if (delta < 0) {
     // Faster - green gradient
     if (intensity < 0.15) return `bg-green-500/20 text-green-300`
@@ -252,18 +231,11 @@ function TrackMap() {
   )
 }
 
-// Cursor state type
-interface CursorState {
-  distance: number | null
-  chartWidth: number
-  chartLeft: number
-}
-
 // Custom tooltip content component for recharts
 interface CustomTooltipProps {
   active?: boolean
-  payload?: any[]
-  label?: number
+  payload?: ReadonlyArray<any>
+  label?: string | number
   dataKey1: string
   dataKey2: string
   dataKey3: string
@@ -281,6 +253,17 @@ function CustomTooltipContent({ active, payload, dataKey1, dataKey2, dataKey3, u
   const v2 = data[dataKey2]
   const v3 = data[dataKey3]
   const distance = data.distance
+
+  const formatMaybe = (v: unknown) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) return "—"
+    return `${formatValue(v)}${unit}`
+  }
+
+  const rows = [
+    { key: dataKey1, color: "#e63946", value: v1 },
+    { key: dataKey2, color: "#457b9d", value: v2 },
+    { key: dataKey3, color: "#9d4edd", value: v3 },
+  ].filter((r) => r.value !== undefined && r.value !== null)
   
   return (
     <div className="bg-card/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-xl">
@@ -288,18 +271,12 @@ function CustomTooltipContent({ active, payload, dataKey1, dataKey2, dataKey3, u
         {distance?.toFixed(3)} km
       </div>
       <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-sm bg-[#e63946]" />
-          <span className="text-xs text-foreground font-medium">{formatValue(v1)}{unit}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-sm bg-[#457b9d]" />
-          <span className="text-xs text-foreground font-medium">{formatValue(v2)}{unit}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-sm bg-[#9d4edd]" />
-          <span className="text-xs text-foreground font-medium">{formatValue(v3)}{unit}</span>
-        </div>
+        {rows.map((r) => (
+          <div key={r.key} className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: r.color }} />
+            <span className="text-xs text-foreground font-medium">{formatMaybe(r.value)}</span>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -307,11 +284,11 @@ function CustomTooltipContent({ active, payload, dataKey1, dataKey2, dataKey3, u
 
 // Synced chart component
 interface SyncedChartProps {
+  data: any[]
   dataKey1: string
   dataKey2: string
   dataKey3: string
   yDomain?: [number, number]
-  title: string
   cursorDistance: number | null
   onCursorMove: (distance: number | null) => void
   chartType?: "monotone" | "stepAfter"
@@ -322,11 +299,11 @@ interface SyncedChartProps {
 }
 
 function SyncedChart({
+  data,
   dataKey1,
   dataKey2,
   dataKey3,
   yDomain,
-  title,
   cursorDistance,
   onCursorMove,
   chartType = "monotone",
@@ -336,6 +313,26 @@ function SyncedChart({
   formatValue = (v) => v.toFixed(1),
 }: SyncedChartProps) {
   
+  const xMax = useMemo(() => {
+    if (!data || data.length === 0) return 0
+    let max = 0
+    for (const d of data) {
+      const v = d?.distance
+      if (typeof v === "number" && Number.isFinite(v) && v > max) max = v
+    }
+    return max
+  }, [data])
+
+  const hasLap2 = useMemo(() => {
+    if (!data || data.length === 0) return false
+    return data.some((d) => d?.[dataKey2] !== undefined && d?.[dataKey2] !== null)
+  }, [data, dataKey2])
+
+  const hasLap3 = useMemo(() => {
+    if (!data || data.length === 0) return false
+    return data.some((d) => d?.[dataKey3] !== undefined && d?.[dataKey3] !== null)
+  }, [data, dataKey3])
+
   const handleMouseMove = useCallback((state: any) => {
     // Use activePayload to get the distance value directly from the data
     if (state?.activePayload && state.activePayload.length > 0) {
@@ -354,7 +351,7 @@ function SyncedChart({
     <div className="relative w-full h-full">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart 
-          data={telemetryData} 
+          data={data} 
           margin={margin}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
@@ -377,8 +374,7 @@ function SyncedChart({
           <XAxis
             dataKey="distance"
             type="number"
-            domain={[0, MAX_DISTANCE]}
-            ticks={[0, 1, 2, 3, 4, 5]}
+            domain={[0, xMax]}
             tick={{ fontSize: 8, fill: "#6b7280" }}
             tickFormatter={(v) => `${v} km`}
             axisLine={{ stroke: "#374151" }}
@@ -397,8 +393,12 @@ function SyncedChart({
           
           {/* Data areas */}
           <Area type={chartType} dataKey={dataKey1} stroke="#e63946" fill="url(#fillLap1)" strokeWidth={1.5} isAnimationActive={false} />
-          <Area type={chartType} dataKey={dataKey2} stroke="#457b9d" fill="url(#fillLap2)" strokeWidth={1.5} isAnimationActive={false} />
-          <Area type={chartType} dataKey={dataKey3} stroke="#9d4edd" fill="url(#fillLap3)" strokeWidth={1.5} isAnimationActive={false} />
+          {hasLap2 && (
+            <Area type={chartType} dataKey={dataKey2} stroke="#457b9d" fill="url(#fillLap2)" strokeWidth={1.5} isAnimationActive={false} />
+          )}
+          {hasLap3 && (
+            <Area type={chartType} dataKey={dataKey3} stroke="#9d4edd" fill="url(#fillLap3)" strokeWidth={1.5} isAnimationActive={false} />
+          )}
           
         {/* Cursor line - smooth position, rendered on top */}
         {cursorDistance !== null && (
@@ -406,7 +406,6 @@ function SyncedChart({
             x={cursorDistance} 
             stroke="#ffffff" 
             strokeWidth={2}
-            isFront={true}
           />
         )}
         
@@ -433,10 +432,200 @@ function SyncedChart({
 export function LapAnalysis() {
   // Shared cursor distance (smooth value, not snapped to data points)
   const [cursorDistance, setCursorDistance] = useState<number | null>(null)
+  const [telemetryData, setTelemetryData] = useState<any[]>(mockTelemetryData)
+  const [ibtLapPoints, setIbtLapPoints] = useState<Record<number, any[]> | null>(null)
+  const [ibtLaps, setIbtLaps] = useState<number[]>([])
+  const [selectedLap, setSelectedLap] = useState<number | null>(null)
+  const [ibtSourceLabel, setIbtSourceLabel] = useState<string | null>(null)
+  const [ibtLoading, setIbtLoading] = useState(false)
+  const [ibtProgress, setIbtProgress] = useState<{ processedRecords: number; totalRecords: number } | null>(null)
+  const [ibtError, setIbtError] = useState<string | null>(null)
 
   const handleCursorMove = useCallback((distance: number | null) => {
     setCursorDistance(distance)
   }, [])
+
+  const resetToMock = useCallback(() => {
+    setTelemetryData(mockTelemetryData)
+    setIbtLapPoints(null)
+    setIbtLaps([])
+    setSelectedLap(null)
+    setIbtSourceLabel(null)
+    setIbtError(null)
+    setIbtProgress(null)
+    setCursorDistance(null)
+  }, [])
+
+  const applyLap = useCallback(
+    (lap: number) => {
+      if (!ibtLapPoints) return
+      const pts = ibtLapPoints[lap]
+      if (!pts) return
+      setSelectedLap(lap)
+      setTelemetryData(pts)
+      setCursorDistance(null)
+    },
+    [ibtLapPoints],
+  )
+
+  const loadIbt = useCallback(
+    async (blob: Blob, label: string) => {
+      setIbtLoading(true)
+      setIbtError(null)
+      setIbtProgress({ processedRecords: 0, totalRecords: 1 })
+      try {
+        const header = await readIbtHeader(blob)
+        const vars = await readIbtVarHeaders(blob, header)
+
+        const recordCount =
+          header.diskSubHeader?.recordCount ??
+          Math.floor((blob.size - (header.sessionInfoOffset + header.sessionInfoLen)) / header.bufLen)
+
+        // Aim for ~10k sparse samples across the whole file (enough to build a clean lap trace).
+        const targetPoints = 10_000
+        const stride = Math.max(1, Math.floor(recordCount / targetPoints))
+
+        const rows = await readIbtSamples(blob, header, vars, {
+          varNames: [
+            "SessionTime",
+            "Lap",
+            "LapDist",
+            "Speed",
+            "RPM",
+            "Gear",
+            "Throttle",
+            "Brake",
+            "SteeringWheelAngle",
+          ],
+          stride,
+          onProgress: (p) => setIbtProgress(p),
+        })
+
+        const num = (v: IbtValue): number | null =>
+          typeof v === "number" && Number.isFinite(v) ? v : null
+
+        const byLap: Record<number, Array<Record<string, IbtValue>>> = {}
+        for (const r of rows) {
+          const lap = num(r["Lap"])
+          if (lap == null) continue
+          byLap[lap] ??= []
+          byLap[lap].push(r)
+        }
+
+        const lapNums = Object.keys(byLap)
+          .map((x) => Number(x))
+          .filter((x) => Number.isFinite(x))
+          .sort((a, b) => a - b)
+
+        const lapPoints: Record<number, any[]> = {}
+        let bestLap: number | null = null
+        let bestCoverage = -Infinity
+
+        for (const lap of lapNums) {
+          const lapRows = byLap[lap]
+          const distKm: number[] = []
+          for (const r of lapRows) {
+            const d = num(r["LapDist"])
+            if (d == null) continue
+            distKm.push(d / 1000)
+          }
+          if (distKm.length < 10) continue
+
+          const minD = Math.min(...distKm)
+          const maxD = Math.max(...distKm)
+          const coverage = maxD - minD
+
+          // Transform rows into the chart schema used by the existing UI (lap1 only).
+          const pts = lapRows
+            .map((r) => {
+              const lapDistM = num(r["LapDist"])
+              if (lapDistM == null) return null
+
+              const speedMs = num(r["Speed"])
+              const rpm = num(r["RPM"])
+              const gear = num(r["Gear"])
+              const throttle = num(r["Throttle"])
+              const brake = num(r["Brake"])
+              const steerRad = num(r["SteeringWheelAngle"])
+
+              const distance = lapDistM / 1000 - minD
+
+              return {
+                distance,
+                // Right telemetry charts
+                speed1: speedMs != null ? speedMs * 3.6 : null,
+                throttle1: throttle != null ? throttle * 100 : null,
+                brake1: brake != null ? brake * 100 : null,
+                gear1: gear != null ? gear : null,
+                rpm1: rpm != null ? rpm : null,
+                steering1: steerRad != null ? (steerRad * 180) / Math.PI : null,
+                // Placeholder series for the center charts (until we compute lap-to-lap deltas)
+                lineDist1: 0,
+                timeDelta1: 0,
+              }
+            })
+            .filter(
+              (
+                p,
+              ): p is {
+                distance: number
+                speed1: number | null
+                throttle1: number | null
+                brake1: number | null
+                gear1: number | null
+                rpm1: number | null
+                steering1: number | null
+                lineDist1: number
+                timeDelta1: number
+              } => p !== null,
+            )
+            .sort((a, b) => a.distance - b.distance)
+
+          lapPoints[lap] = pts
+
+          // Prefer completed-ish laps and ignore lap 0 unless it's the only one.
+          const eligible = lap !== 0
+          if ((eligible && coverage > bestCoverage && pts.length >= 50) || (!bestLap && coverage > bestCoverage)) {
+            bestCoverage = coverage
+            bestLap = lap
+          }
+        }
+
+        if (!bestLap || !lapPoints[bestLap] || lapPoints[bestLap].length === 0) {
+          throw new Error("Could not find a usable lap in this .ibt (missing Lap/LapDist?)")
+        }
+
+        setIbtLapPoints(lapPoints)
+        setIbtLaps(Object.keys(lapPoints).map((x) => Number(x)).sort((a, b) => a - b))
+        setIbtSourceLabel(`${label} (stride ${stride}, tickRate ${header.tickRate})`)
+        setTelemetryData(lapPoints[bestLap])
+        setSelectedLap(bestLap)
+        setCursorDistance(null)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        setIbtError(msg)
+      } finally {
+        setIbtLoading(false)
+        setIbtProgress(null)
+      }
+    },
+    [],
+  )
+
+  const loadSample = useCallback(async () => {
+    try {
+      const samplePath = encodeURI(
+        "/telemtry/acuransxevo22gt3_virginia 2022 full 2025-12-20 22-57-02.ibt",
+      )
+      const res = await fetch(samplePath)
+      if (!res.ok) throw new Error(`Failed to fetch sample .ibt: ${res.status} ${res.statusText}`)
+      const blob = await res.blob()
+      await loadIbt(blob, "Sample .ibt")
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setIbtError(msg)
+    }
+  }, [loadIbt])
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
@@ -523,6 +712,61 @@ export function LapAnalysis() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar */}
         <aside className="flex w-64 flex-col border-r border-border">
+          {/* Telemetry source */}
+          <div className="border-b border-border p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Telemetry (.ibt)</span>
+              {ibtSourceLabel && <span className="text-[10px] text-muted-foreground truncate">{ibtSourceLabel}</span>}
+            </div>
+
+            <Input
+              type="file"
+              accept=".ibt"
+              disabled={ibtLoading}
+              onChange={(e) => {
+                const f = e.currentTarget.files?.[0]
+                if (!f) return
+                void loadIbt(f, f.name)
+              }}
+            />
+
+            <div className="mt-2 flex gap-2">
+              <Button variant="outline" size="xs" className="flex-1" disabled={ibtLoading} onClick={() => void loadSample()}>
+                Load sample
+              </Button>
+              <Button variant="ghost" size="xs" className="flex-1" disabled={ibtLoading && !ibtLapPoints} onClick={resetToMock}>
+                Use mock
+              </Button>
+            </div>
+
+            {ibtLaps.length > 0 && (
+              <div className="mt-2">
+                <Select
+                  value={selectedLap != null ? String(selectedLap) : undefined}
+                  onValueChange={(v) => applyLap(Number(v))}
+                >
+                  <SelectTrigger className="w-full" size="sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ibtLaps.map((lap) => (
+                      <SelectItem key={lap} value={String(lap)}>
+                        Lap {lap}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {ibtProgress && (
+              <div className="mt-2 text-[10px] text-muted-foreground">
+                Parsing… {Math.floor((ibtProgress.processedRecords / ibtProgress.totalRecords) * 100)}%
+              </div>
+            )}
+            {ibtError && <div className="mt-2 text-[10px] text-red-400">{ibtError}</div>}
+          </div>
+
           {/* Laps section */}
           <div className="p-3">
             <div className="mb-2 flex items-center justify-between">
@@ -636,11 +880,11 @@ export function LapAnalysis() {
                 </div>
                 <div className="h-[calc(100%-16px)]">
                   <SyncedChart
+                    data={telemetryData}
                     dataKey1="lineDist1"
                     dataKey2="lineDist2"
                     dataKey3="lineDist3"
                     yDomain={[-30, 30]}
-                    title="Line distance"
                     cursorDistance={cursorDistance}
                     onCursorMove={handleCursorMove}
                     showYAxisRight={false}
@@ -660,10 +904,10 @@ export function LapAnalysis() {
                 </div>
                 <div className="h-[calc(100%-16px)]">
                   <SyncedChart
+                    data={telemetryData}
                     dataKey1="timeDelta1"
                     dataKey2="timeDelta2"
                     dataKey3="timeDelta3"
-                    title="Time delta"
                     cursorDistance={cursorDistance}
                     onCursorMove={handleCursorMove}
                     showYAxisRight={false}
@@ -698,11 +942,11 @@ export function LapAnalysis() {
               {/* Speed */}
               <div className="relative h-28 border-b border-border overflow-hidden">
                 <SyncedChart
+                  data={telemetryData}
                   dataKey1="speed1"
                   dataKey2="speed2"
                   dataKey3="speed3"
                   yDomain={[0, 250]}
-                  title="Speed"
                   cursorDistance={cursorDistance}
                   onCursorMove={handleCursorMove}
                   unit=" km/h"
@@ -714,11 +958,11 @@ export function LapAnalysis() {
               {/* Throttle */}
               <div className="relative h-28 border-b border-border overflow-hidden">
                 <SyncedChart
+                  data={telemetryData}
                   dataKey1="throttle1"
                   dataKey2="throttle2"
                   dataKey3="throttle3"
                   yDomain={[0, 100]}
-                  title="Throttle"
                   cursorDistance={cursorDistance}
                   onCursorMove={handleCursorMove}
                   unit="%"
@@ -730,11 +974,11 @@ export function LapAnalysis() {
               {/* Brake */}
               <div className="relative h-28 border-b border-border overflow-hidden">
                 <SyncedChart
+                  data={telemetryData}
                   dataKey1="brake1"
                   dataKey2="brake2"
                   dataKey3="brake3"
                   yDomain={[0, 100]}
-                  title="Brake"
                   cursorDistance={cursorDistance}
                   onCursorMove={handleCursorMove}
                   unit="%"
@@ -746,11 +990,11 @@ export function LapAnalysis() {
               {/* Gear */}
               <div className="relative h-28 border-b border-border overflow-hidden">
                 <SyncedChart
+                  data={telemetryData}
                   dataKey1="gear1"
                   dataKey2="gear2"
                   dataKey3="gear3"
                   yDomain={[0, 7]}
-                  title="Gear"
                   cursorDistance={cursorDistance}
                   onCursorMove={handleCursorMove}
                   chartType="stepAfter"
@@ -762,11 +1006,11 @@ export function LapAnalysis() {
               {/* RPM */}
               <div className="relative h-28 border-b border-border overflow-hidden">
                 <SyncedChart
+                  data={telemetryData}
                   dataKey1="rpm1"
                   dataKey2="rpm2"
                   dataKey3="rpm3"
                   yDomain={[2000, 8000]}
-                  title="RPM"
                   cursorDistance={cursorDistance}
                   onCursorMove={handleCursorMove}
                   unit=" rpm"
@@ -778,11 +1022,11 @@ export function LapAnalysis() {
               {/* Steering wheel angle */}
               <div className="relative h-28 border-b border-border overflow-hidden">
                 <SyncedChart
+                  data={telemetryData}
                   dataKey1="steering1"
                   dataKey2="steering2"
                   dataKey3="steering3"
                   yDomain={[-200, 200]}
-                  title="Steering wheel angle"
                   cursorDistance={cursorDistance}
                   onCursorMove={handleCursorMove}
                   unit="°"
