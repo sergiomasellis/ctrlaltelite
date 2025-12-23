@@ -47,11 +47,13 @@ const SyncedChartInner = memo(function SyncedChartInner({
   onZoomChange,
   originalXMax,
   children,
-}: SyncedChartProps & { children?: React.ReactNode }) {
+  innerRef,
+}: SyncedChartProps & { children?: React.ReactNode; innerRef?: React.RefObject<HTMLDivElement> }) {
   // Use cursor store instead of props for updates
   const updateCursor = useCursorUpdate()
   // Each chart has its OWN ref for accurate mouse position calculations
-  const chartRef = useRef<HTMLDivElement>(null)
+  const internalChartRef = useRef<HTMLDivElement>(null)
+  const chartRef = innerRef || internalChartRef
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null)
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null)
   const [isSelecting, setIsSelecting] = useState(false)
@@ -90,6 +92,31 @@ const SyncedChartInner = memo(function SyncedChartInner({
     [],
   )
 
+  // Helper to get actual plot area bounds by measuring the SVG
+  const getActualPlotBounds = useCallback((): { plotLeft: number; plotWidth: number } | null => {
+    if (!chartRef?.current) return null
+    
+    // Find the SVG element inside the chart
+    const svg = chartRef.current.querySelector('svg.recharts-surface')
+    if (!svg) return null
+    
+    // Find the plot area (the clipPath or the main plot group)
+    // Recharts uses a clipPath with id like "recharts-clip-*" for the plot area
+    const clipPath = svg.querySelector('defs clipPath[id^="recharts-clip"]')
+    if (!clipPath) return null
+    
+    // Get the clipPath rectangle which defines the plot area
+    const clipRect = clipPath.querySelector('rect')
+    if (!clipRect) return null
+    
+    const plotX = parseFloat(clipRect.getAttribute('x') || '0')
+    const plotWidth = parseFloat(clipRect.getAttribute('width') || '0')
+    
+    if (plotWidth <= 0) return null
+    
+    return { plotLeft: plotX, plotWidth }
+  }, [])
+
   // Helper to calculate distance from mouse X position
   const getDistanceFromMouseX = useCallback(
     (clientX: number): number | null => {
@@ -97,15 +124,27 @@ const SyncedChartInner = memo(function SyncedChartInner({
       
       const rect = chartRef.current.getBoundingClientRect()
       const mouseX = clientX - rect.left
-      const chartWidth = rect.width
       
-      if (chartWidth <= 0) return null
+      // Get actual plot area bounds (accounts for label widths)
+      const plotBounds = getActualPlotBounds()
+      if (!plotBounds) {
+        // Fallback to margin-based calculation if we can't find the plot area
+        const chartWidth = rect.width
+        if (chartWidth <= 0) return null
+        const marginLeft = margin.left || 10
+        const marginRight = margin.right || 40
+        const plotWidth = Math.max(1, chartWidth - marginLeft - marginRight)
+        const plotX = mouseX - marginLeft
+        const clampedX = Math.max(0, Math.min(plotWidth, plotX))
+        const normalizedX = clampedX / plotWidth
+        const xRange = xMax - xMin
+        const distance = xMin + normalizedX * xRange
+        return Number.isFinite(distance) ? distance : null
+      }
       
-      // Account for margins - Recharts uses these margins for axes
-      const marginLeft = margin.left || 10
-      const marginRight = margin.right || 40
-      const plotWidth = Math.max(1, chartWidth - marginLeft - marginRight)
-      const plotX = mouseX - marginLeft
+      // Use actual plot area bounds
+      const { plotLeft, plotWidth } = plotBounds
+      const plotX = mouseX - plotLeft
       
       // Clamp to plot area
       const clampedX = Math.max(0, Math.min(plotWidth, plotX))
@@ -115,7 +154,7 @@ const SyncedChartInner = memo(function SyncedChartInner({
       
       return Number.isFinite(distance) ? distance : null
     },
-    [xMin, xMax, margin],
+    [xMin, xMax, margin, getActualPlotBounds],
   )
 
   // Handle smooth mouse movement with RAF throttling for performance
@@ -364,14 +403,16 @@ export const SyncedChart = memo(function SyncedChart(props: SyncedChartProps) {
   const margin = props.margin ?? { top: 10, right: 40, left: 10, bottom: 10 }
   const xMin = props.xMin ?? 0
   const xMax = props.xMax ?? props.originalXMax ?? 0
+  const chartRef = useRef<HTMLDivElement>(null)
   
   return (
-    <SyncedChartInner {...props} margin={margin}>
+    <SyncedChartInner {...props} margin={margin} innerRef={chartRef}>
       <CursorOverlay
         xMin={xMin}
         xMax={xMax}
         marginLeft={margin.left}
         marginRight={margin.right}
+        containerRef={chartRef}
       />
     </SyncedChartInner>
   )
