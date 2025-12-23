@@ -13,32 +13,92 @@ export function CursorOverlay({
   xMax: number
   marginLeft: number
   marginRight: number
-  containerRef: React.RefObject<HTMLDivElement>
+  containerRef: React.RefObject<HTMLDivElement | null>
 }) {
   const lineRef = useRef<HTMLDivElement>(null)
   
   // Helper to get actual plot area bounds by measuring the SVG
+  // Uses multiple methods to find the exact plot area boundaries
   const getActualPlotBounds = (): { plotLeft: number; plotWidth: number } | null => {
     if (!containerRef?.current) return null
     
     // Find the SVG element inside the chart
-    const svg = containerRef.current.querySelector('svg.recharts-surface')
+    const svg = containerRef.current.querySelector('svg.recharts-surface') as SVGSVGElement | null
     if (!svg) return null
     
-    // Find the plot area clipPath
+    // Get the container's bounding box for coordinate conversion
+    const containerRect = containerRef.current.getBoundingClientRect()
+    const svgRect = svg.getBoundingClientRect()
+    const svgOffsetX = svgRect.left - containerRect.left
+    
+    // Method 1: Try to find the plot area by looking for the clipPath used by Recharts
+    // The clipPath rectangle defines the exact plot area (excluding axes and labels)
     const clipPath = svg.querySelector('defs clipPath[id^="recharts-clip"]')
-    if (!clipPath) return null
+    if (clipPath) {
+      const clipRect = clipPath.querySelector('rect')
+      if (clipRect) {
+        const plotX = parseFloat(clipRect.getAttribute('x') || '0')
+        const plotWidthSvg = parseFloat(clipRect.getAttribute('width') || '0')
+        
+        if (plotWidthSvg > 0) {
+          // Convert SVG coordinates to container pixel coordinates
+          const viewBox = svg.viewBox.baseVal
+          let plotLeftInPixels: number
+          let plotWidthInPixels: number
+          
+          if (viewBox.width > 0 && viewBox.height > 0) {
+            // SVG has a viewBox - coordinates need scaling
+            const scaleX = svgRect.width / viewBox.width
+            plotLeftInPixels = svgOffsetX + (plotX * scaleX)
+            plotWidthInPixels = plotWidthSvg * scaleX
+          } else {
+            // No viewBox - coordinates are in pixel space relative to SVG
+            // Check if SVG has explicit width that differs from rendered size
+            const svgWidthAttr = svg.width?.baseVal?.value
+            if (svgWidthAttr && svgWidthAttr > 0 && Math.abs(svgWidthAttr - svgRect.width) > 1) {
+              // Need scaling
+              const scaleX = svgRect.width / svgWidthAttr
+              plotLeftInPixels = svgOffsetX + (plotX * scaleX)
+              plotWidthInPixels = plotWidthSvg * scaleX
+            } else {
+              // 1:1 mapping - coordinates are already in container pixel space relative to SVG
+              plotLeftInPixels = svgOffsetX + plotX
+              plotWidthInPixels = plotWidthSvg
+            }
+          }
+          
+          return { plotLeft: plotLeftInPixels, plotWidth: plotWidthInPixels }
+        }
+      }
+    }
     
-    // Get the clipPath rectangle which defines the plot area
-    const clipRect = clipPath.querySelector('rect')
-    if (!clipRect) return null
+    // Method 2: Try to find the X-axis line which spans the plot area
+    const xAxisLines = svg.querySelectorAll('.recharts-cartesian-axis line, .recharts-xAxis line')
+    for (const line of Array.from(xAxisLines)) {
+      const x1 = parseFloat(line.getAttribute('x1') || '0')
+      const x2 = parseFloat(line.getAttribute('x2') || '0')
+      const plotLeftSvg = Math.min(x1, x2)
+      const plotRightSvg = Math.max(x1, x2)
+      const plotWidthSvg = plotRightSvg - plotLeftSvg
+      
+      if (plotWidthSvg > 0) {
+        const viewBox = svg.viewBox.baseVal
+        if (viewBox.width > 0) {
+          const scaleX = svgRect.width / viewBox.width
+          return {
+            plotLeft: svgOffsetX + (plotLeftSvg * scaleX),
+            plotWidth: plotWidthSvg * scaleX
+          }
+        } else {
+          return {
+            plotLeft: svgOffsetX + plotLeftSvg,
+            plotWidth: plotWidthSvg
+          }
+        }
+      }
+    }
     
-    const plotX = parseFloat(clipRect.getAttribute('x') || '0')
-    const plotWidth = parseFloat(clipRect.getAttribute('width') || '0')
-    
-    if (plotWidth <= 0) return null
-    
-    return { plotLeft: plotX, plotWidth }
+    return null
   }
   
   // Subscribe to cursor updates and directly manipulate DOM
@@ -70,8 +130,10 @@ export function CursorOverlay({
       const plotWidth = Math.max(1, chartWidth - marginLeft - marginRight)
       const normalizedPosition = (cursorDistance - xMin) / xRange
       const plotX = normalizedPosition * plotWidth
+      const absoluteX = marginLeft + plotX
+      // Use translate3d for GPU acceleration - center line (line is 2px wide, so offset by 1px)
       el.style.display = 'block'
-      el.style.left = `${marginLeft + plotX}px`
+      el.style.transform = `translate3d(${absoluteX - 1}px, 0, 0)`
       return
     }
     
@@ -80,9 +142,9 @@ export function CursorOverlay({
     const normalizedPosition = (cursorDistance - xMin) / xRange
     const plotX = normalizedPosition * plotWidth
     const absoluteX = plotLeft + plotX
-    
+    // Use translate3d for GPU acceleration - center line (line is 2px wide, so offset by 1px)
     el.style.display = 'block'
-    el.style.left = `${absoluteX}px`
+    el.style.transform = `translate3d(${absoluteX - 1}px, 0, 0)`
   }, [xMin, xMax, marginLeft, marginRight, containerRef])
   
   return (
@@ -91,10 +153,10 @@ export function CursorOverlay({
       className="absolute top-0 bottom-0 pointer-events-none z-10"
       style={{
         display: 'none',
+        left: '0',
         width: '2px',
         backgroundColor: 'white',
-        transform: 'translateX(-50%)',
-        willChange: 'left',
+        willChange: 'transform',
       }}
     />
   )

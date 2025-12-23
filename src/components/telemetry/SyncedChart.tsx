@@ -6,8 +6,8 @@ import {
   YAxis,
   ResponsiveContainer,
   ReferenceArea,
-  Tooltip,
   CartesianGrid,
+  Tooltip,
 } from "recharts"
 import { useCursorUpdate } from "@/lib/cursorStore"
 import type { ChartSeries } from "./types"
@@ -40,20 +40,20 @@ const SyncedChartInner = memo(function SyncedChartInner({
   chartType = "monotone",
   showYAxisRight = true,
   margin = { top: 10, right: 40, left: 10, bottom: 10 },
-  unit = "",
-  formatValue = (v: number) => v.toFixed(1),
   xMin: zoomXMin = null,
   xMax: zoomXMax = null,
   onZoomChange,
   originalXMax,
+  unit,
+  formatValue,
   children,
   innerRef,
-}: SyncedChartProps & { children?: React.ReactNode; innerRef?: React.RefObject<HTMLDivElement> }) {
+}: SyncedChartProps & { children?: React.ReactNode; innerRef?: React.RefObject<HTMLDivElement | null> }) {
   // Use cursor store instead of props for updates
   const updateCursor = useCursorUpdate()
-  // Each chart has its OWN ref for accurate mouse position calculations
-  const internalChartRef = useRef<HTMLDivElement>(null)
-  const chartRef = innerRef || internalChartRef
+  // Use provided ref or create local one for accurate mouse position calculations
+  const localRef = useRef<HTMLDivElement>(null)
+  const chartRef = innerRef ?? localRef
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null)
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null)
   const [isSelecting, setIsSelecting] = useState(false)
@@ -93,28 +93,87 @@ const SyncedChartInner = memo(function SyncedChartInner({
   )
 
   // Helper to get actual plot area bounds by measuring the SVG
+  // Uses multiple methods to find the exact plot area boundaries
   const getActualPlotBounds = useCallback((): { plotLeft: number; plotWidth: number } | null => {
     if (!chartRef?.current) return null
     
     // Find the SVG element inside the chart
-    const svg = chartRef.current.querySelector('svg.recharts-surface')
+    const svg = chartRef.current.querySelector('svg.recharts-surface') as SVGSVGElement | null
     if (!svg) return null
     
-    // Find the plot area (the clipPath or the main plot group)
-    // Recharts uses a clipPath with id like "recharts-clip-*" for the plot area
+    // Get the container's bounding box for coordinate conversion
+    const containerRect = chartRef.current.getBoundingClientRect()
+    const svgRect = svg.getBoundingClientRect()
+    const svgOffsetX = svgRect.left - containerRect.left
+    
+    // Method 1: Try to find the plot area by looking for the clipPath used by Recharts
+    // The clipPath rectangle defines the exact plot area (excluding axes and labels)
     const clipPath = svg.querySelector('defs clipPath[id^="recharts-clip"]')
-    if (!clipPath) return null
+    if (clipPath) {
+      const clipRect = clipPath.querySelector('rect')
+      if (clipRect) {
+        const plotX = parseFloat(clipRect.getAttribute('x') || '0')
+        const plotWidthSvg = parseFloat(clipRect.getAttribute('width') || '0')
+        
+        if (plotWidthSvg > 0) {
+          // Convert SVG coordinates to container pixel coordinates
+          const viewBox = svg.viewBox.baseVal
+          let plotLeftInPixels: number
+          let plotWidthInPixels: number
+          
+          if (viewBox.width > 0 && viewBox.height > 0) {
+            // SVG has a viewBox - coordinates need scaling
+            const scaleX = svgRect.width / viewBox.width
+            plotLeftInPixels = svgOffsetX + (plotX * scaleX)
+            plotWidthInPixels = plotWidthSvg * scaleX
+          } else {
+            // No viewBox - coordinates are in pixel space relative to SVG
+            // Check if SVG has explicit width that differs from rendered size
+            const svgWidthAttr = svg.width?.baseVal?.value
+            if (svgWidthAttr && svgWidthAttr > 0 && Math.abs(svgWidthAttr - svgRect.width) > 1) {
+              // Need scaling
+              const scaleX = svgRect.width / svgWidthAttr
+              plotLeftInPixels = svgOffsetX + (plotX * scaleX)
+              plotWidthInPixels = plotWidthSvg * scaleX
+            } else {
+              // 1:1 mapping - coordinates are already in container pixel space relative to SVG
+              plotLeftInPixels = svgOffsetX + plotX
+              plotWidthInPixels = plotWidthSvg
+            }
+          }
+          
+          return { plotLeft: plotLeftInPixels, plotWidth: plotWidthInPixels }
+        }
+      }
+    }
     
-    // Get the clipPath rectangle which defines the plot area
-    const clipRect = clipPath.querySelector('rect')
-    if (!clipRect) return null
+    // Method 2: Try to find the X-axis line which spans the plot area
+    const xAxisLines = svg.querySelectorAll('.recharts-cartesian-axis line, .recharts-xAxis line')
+    for (const line of Array.from(xAxisLines)) {
+      const x1 = parseFloat(line.getAttribute('x1') || '0')
+      const x2 = parseFloat(line.getAttribute('x2') || '0')
+      const plotLeftSvg = Math.min(x1, x2)
+      const plotRightSvg = Math.max(x1, x2)
+      const plotWidthSvg = plotRightSvg - plotLeftSvg
+      
+      if (plotWidthSvg > 0) {
+        const viewBox = svg.viewBox.baseVal
+        if (viewBox.width > 0) {
+          const scaleX = svgRect.width / viewBox.width
+          return {
+            plotLeft: svgOffsetX + (plotLeftSvg * scaleX),
+            plotWidth: plotWidthSvg * scaleX
+          }
+        } else {
+          return {
+            plotLeft: svgOffsetX + plotLeftSvg,
+            plotWidth: plotWidthSvg
+          }
+        }
+      }
+    }
     
-    const plotX = parseFloat(clipRect.getAttribute('x') || '0')
-    const plotWidth = parseFloat(clipRect.getAttribute('width') || '0')
-    
-    if (plotWidth <= 0) return null
-    
-    return { plotLeft: plotX, plotWidth }
+    return null
   }, [])
 
   // Helper to calculate distance from mouse X position
@@ -401,9 +460,21 @@ const SyncedChartInner = memo(function SyncedChartInner({
 // Wrapper component that adds cursor overlay
 export const SyncedChart = memo(function SyncedChart(props: SyncedChartProps) {
   const margin = props.margin ?? { top: 10, right: 40, left: 10, bottom: 10 }
+  const chartRef = useRef<HTMLDivElement | null>(null)
+  
+  // Calculate xMin and xMax for CursorOverlay
   const xMin = props.xMin ?? 0
-  const xMax = props.xMax ?? props.originalXMax ?? 0
-  const chartRef = useRef<HTMLDivElement>(null)
+  const fullXMax = useMemo(() => {
+    if (props.originalXMax != null) return props.originalXMax
+    if (!props.data || props.data.length === 0) return 0
+    let max = 0
+    for (const d of props.data) {
+      const v = d?.distance
+      if (typeof v === "number" && Number.isFinite(v) && v > max) max = v
+    }
+    return max
+  }, [props.data, props.originalXMax])
+  const xMax = props.xMax ?? fullXMax
   
   return (
     <SyncedChartInner {...props} margin={margin} innerRef={chartRef}>

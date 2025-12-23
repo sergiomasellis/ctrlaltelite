@@ -1,4 +1,4 @@
-import type { IbtLapData, SectorBoundary, SectorTimes, IbtLapPoint } from "@/components/lap-analysis/types"
+import type { IbtLapData, SectorBoundary, SectorTimes } from "@/components/lap-analysis/types"
 import { interpolateValue } from "./telemetry-utils"
 
 // Simple YAML parser for sector boundaries
