@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, memo } from "react"
+import { useState, useCallback, useMemo, useRef, memo, useEffect } from "react"
 import {
   AreaChart,
   Area,
@@ -288,7 +288,7 @@ const SyncedChartInner = memo(function SyncedChartInner({
   }, [isSelecting, updateCursor])
 
   const handleWheel = useCallback(
-    (e: React.WheelEvent<HTMLDivElement>) => {
+    (e: WheelEvent) => {
       if (!onZoomChange || !chartRef?.current || fullXMax === 0) return
 
       e.preventDefault()
@@ -310,8 +310,20 @@ const SyncedChartInner = memo(function SyncedChartInner({
         onZoomChange(newXMin, newXMax)
       }
     },
-    [xMin, xMax, fullXMax, onZoomChange, chartRef],
+    [xMin, xMax, fullXMax, onZoomChange],
   )
+
+  // Attach wheel event listener directly to DOM with passive: false
+  useEffect(() => {
+    const element = chartRef.current
+    if (!element) return
+
+    element.addEventListener('wheel', handleWheel, { passive: false })
+
+    return () => {
+      element.removeEventListener('wheel', handleWheel)
+    }
+  }, [handleWheel])
 
   const handleTouchMove = useCallback(
     (e: React.TouchEvent<HTMLDivElement>) => {
@@ -356,7 +368,6 @@ const SyncedChartInner = memo(function SyncedChartInner({
       ref={chartRef}
       onMouseMove={handleContainerMouseMove}
       onMouseLeave={handleContainerMouseLeave}
-      onWheel={handleWheel}
       onTouchMove={handleTouchMove}
       onDoubleClick={() => onZoomChange?.(null, null)}
       style={{ touchAction: "none" }}

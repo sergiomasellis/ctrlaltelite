@@ -30,10 +30,37 @@ import { SectorIndicators } from "@/components/lap-analysis/SectorIndicators"
 import { prepareTelemetryData } from "@/components/lap-analysis/telemetry-data-utils"
 import { LAP_COLOR_PALETTE } from "@/components/lap-analysis/constants"
 import type { IbtLapData, IbtLapPoint, SectorBoundary } from "@/components/lap-analysis/types"
+import { DraggableChart } from "@/components/telemetry/DraggableChart"
 
 // Lazy load chart component for better initial load
 const SyncedChart = lazy(() => import("@/components/telemetry/SyncedChart").then(module => ({ default: module.SyncedChart })))
 const TrackMap = lazy(() => import("@/components/track/TrackMap").then(module => ({ default: module.TrackMap })))
+
+// Chart type IDs
+const CHART_IDS = {
+  SPEED: "speed",
+  THROTTLE: "throttle",
+  BRAKE: "brake",
+  GEAR: "gear",
+  RPM: "rpm",
+  STEERING: "steering",
+  TIME_DELTA: "timeDelta",
+  LINE_DIST: "lineDist",
+} as const
+
+type ChartId = typeof CHART_IDS[keyof typeof CHART_IDS]
+
+// Default chart order
+const DEFAULT_CHART_ORDER: ChartId[] = [
+  CHART_IDS.SPEED,
+  CHART_IDS.THROTTLE,
+  CHART_IDS.BRAKE,
+  CHART_IDS.TIME_DELTA,
+  CHART_IDS.LINE_DIST,
+  CHART_IDS.GEAR,
+  CHART_IDS.RPM,
+  CHART_IDS.STEERING,
+]
 
 export function LapAnalysis() {
   // Create cursor store once - bypasses React state for performance
@@ -53,6 +80,11 @@ export function LapAnalysis() {
   const [ibtError, setIbtError] = useState<string | null>(null)
   const [sectorBoundaries, setSectorBoundaries] = useState<SectorBoundary[]>([])
   
+  // Chart order state
+  const [chartOrder, setChartOrder] = useState<ChartId[]>(DEFAULT_CHART_ORDER)
+  const [draggingChartId, setDraggingChartId] = useState<ChartId | null>(null)
+  const [dragOverChartId, setDragOverChartId] = useState<ChartId | null>(null)
+  
   // Zoom state (shared across all charts)
   const [zoomXMin, setZoomXMin] = useState<number | null>(null)
   const [zoomXMax, setZoomXMax] = useState<number | null>(null)
@@ -70,6 +102,42 @@ export function LapAnalysis() {
   const handleSectorClick = useCallback((sectorStartKm: number, sectorEndKm: number) => {
     setZoomXMin(sectorStartKm)
     setZoomXMax(sectorEndKm)
+  }, [])
+
+  // Drag and drop handlers
+  const handleDragStart = useCallback((id: ChartId) => {
+    setDraggingChartId(id)
+  }, [])
+
+  const handleDragEnd = useCallback(() => {
+    setDraggingChartId(null)
+    setDragOverChartId(null)
+  }, [])
+
+  const handleDragOver = useCallback((id: ChartId) => {
+    setDragOverChartId(id)
+  }, [])
+
+  const handleDrop = useCallback((draggedId: string, targetId: string) => {
+    const dragged = draggedId as ChartId
+    const target = targetId as ChartId
+    if (dragged === target) {
+      setDragOverChartId(null)
+      return
+    }
+
+    setChartOrder((prev) => {
+      const newOrder = [...prev]
+      const draggedIndex = newOrder.indexOf(dragged)
+      const targetIndex = newOrder.indexOf(target)
+      
+      if (draggedIndex === -1 || targetIndex === -1) return prev
+      
+      newOrder.splice(draggedIndex, 1)
+      newOrder.splice(targetIndex, 0, dragged)
+      return newOrder
+    })
+    setDragOverChartId(null)
   }, [])
 
   const toggleLap = useCallback((lap: number) => {
@@ -397,6 +465,133 @@ export function LapAnalysis() {
   const formatDecimal1 = useCallback((v: number) => v.toFixed(1), [])
   const formatDecimal0 = useCallback((v: number) => v.toFixed(0), [])
 
+  // Chart configuration map
+  const chartConfigs = useMemo(() => {
+    const configs: Record<ChartId, { title: string; unit?: string }> = {
+      [CHART_IDS.SPEED]: { title: "Speed", unit: "km/h" },
+      [CHART_IDS.THROTTLE]: { title: "Throttle", unit: "%" },
+      [CHART_IDS.BRAKE]: { title: "Brake", unit: "%" },
+      [CHART_IDS.GEAR]: { title: "Gear" },
+      [CHART_IDS.RPM]: { title: "RPM", unit: "x1000" },
+      [CHART_IDS.STEERING]: { title: "Steering", unit: "deg" },
+      [CHART_IDS.TIME_DELTA]: { title: "Time Delta", unit: "sec" },
+      [CHART_IDS.LINE_DIST]: { title: "Line Distance", unit: "m" },
+    }
+    return configs
+  }, [])
+
+  // Render chart content based on chart ID
+  const renderChartContent = useCallback((chartId: ChartId) => {
+    const commonProps = {
+      data: telemetryData,
+      xMin: zoomXMin,
+      xMax: zoomXMax,
+      onZoomChange: handleZoomChange,
+      originalXMax: originalXMax ?? undefined,
+      margin: { top: 0, right: 0, left: 0, bottom: 0 } as const,
+    }
+
+    switch (chartId) {
+      case CHART_IDS.SPEED:
+        return (
+          <SyncedChart
+            {...commonProps}
+            series={speedSeries}
+            yDomain={[0, 250]}
+            unit=" km/h"
+            formatValue={formatDecimal1}
+          />
+        )
+      case CHART_IDS.THROTTLE:
+        return (
+          <SyncedChart
+            {...commonProps}
+            series={throttleSeries}
+            yDomain={[0, 100]}
+            unit="%"
+            formatValue={formatDecimal0}
+          />
+        )
+      case CHART_IDS.BRAKE:
+        return (
+          <SyncedChart
+            {...commonProps}
+            series={brakeSeries}
+            yDomain={[0, 100]}
+            unit="%"
+            formatValue={formatDecimal0}
+          />
+        )
+      case CHART_IDS.GEAR:
+        return (
+          <SyncedChart
+            {...commonProps}
+            series={gearSeries}
+            yDomain={[0, 7]}
+            chartType="stepAfter"
+            formatValue={formatDecimal0}
+          />
+        )
+      case CHART_IDS.RPM:
+        return (
+          <SyncedChart
+            {...commonProps}
+            series={rpmSeries}
+            yDomain={[2, 8]}
+            unit=" rpm"
+            formatValue={formatDecimal0}
+          />
+        )
+      case CHART_IDS.STEERING:
+        return (
+          <SyncedChart
+            {...commonProps}
+            series={steeringSeries}
+            yDomain={[-200, 200]}
+            unit="°"
+            formatValue={formatDecimal1}
+          />
+        )
+      case CHART_IDS.TIME_DELTA:
+        return (
+          <SyncedChart
+            {...commonProps}
+            series={timeDeltaSeries}
+            showYAxisRight={true}
+            unit=" sec"
+          />
+        )
+      case CHART_IDS.LINE_DIST:
+        return (
+          <SyncedChart
+            {...commonProps}
+            series={lineDistSeries}
+            yDomain={[-15, 15]}
+            showYAxisRight={true}
+            unit=" m"
+          />
+        )
+      default:
+        return null
+    }
+  }, [
+    telemetryData,
+    zoomXMin,
+    zoomXMax,
+    handleZoomChange,
+    originalXMax,
+    speedSeries,
+    throttleSeries,
+    brakeSeries,
+    gearSeries,
+    rpmSeries,
+    steeringSeries,
+    timeDeltaSeries,
+    lineDistSeries,
+    formatDecimal1,
+    formatDecimal0,
+  ])
+
   // Calculate summary statistics for reference lap
   const refLapStats = useMemo(() => {
     if (!ibtLapDataByLap || selectedLaps.length === 0) return null
@@ -589,183 +784,43 @@ export function LapAnalysis() {
                 <>
                   {/* Charts container with scroll if needed */}
                   <div className="flex-1 flex flex-col overflow-y-auto">
-                    <div className="flex flex-1">
-                      {/* Main comparison charts - top row */}
-                      <div className="flex-1 flex flex-col min-w-0">
-                        {/* Speed chart - largest and most important */}
-                        <div className="flex-1 min-h-[120px] border-b border-border px-2 pt-1 pb-1 overflow-hidden">
-                          <div className="flex items-center justify-between mb-0.5">
-                            <span className="text-xs font-medium">Speed</span>
-                            <span className="text-[10px] text-muted-foreground">km/h</span>
-                          </div>
-                          <div className="h-[calc(100%-16px)] min-h-0">
+                    {/* Draggable charts grid */}
+                    <div
+                      className="grid grid-cols-2 auto-rows-fr gap-2 p-2 flex-1"
+                      onDragLeave={(e) => {
+                        // Clear drag over when leaving the grid
+                        const relatedTarget = e.relatedTarget as HTMLElement
+                        if (!e.currentTarget.contains(relatedTarget)) {
+                          setDragOverChartId(null)
+                        }
+                      }}
+                    >
+                      {chartOrder.map((chartId) => {
+                        const config = chartConfigs[chartId]
+                        const isSpeedChart = chartId === CHART_IDS.SPEED
+                        const colSpan = isSpeedChart ? "col-span-2" : "col-span-1"
+                        const minHeight = isSpeedChart ? "min-h-[200px]" : "min-h-[144px]"
+
+                        return (
+                          <DraggableChart
+                            key={chartId}
+                            id={chartId}
+                            title={config.title}
+                            unit={config.unit}
+                            onDragStart={handleDragStart}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={handleDragOver}
+                            onDrop={handleDrop}
+                            isDragging={draggingChartId === chartId}
+                            dragOverId={dragOverChartId}
+                            className={`overflow-hidden ${colSpan} ${minHeight} border-border`}
+                          >
                             <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">Loading...</div>}>
-                              <SyncedChart
-                                data={telemetryData}
-                                series={speedSeries}
-                                yDomain={[0, 250]}
-                                unit=" km/h"
-                                formatValue={formatDecimal1}
-                                xMin={zoomXMin}
-                                xMax={zoomXMax}
-                                onZoomChange={handleZoomChange}
-                                originalXMax={originalXMax ?? undefined}
-                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                              />
+                              {renderChartContent(chartId)}
                             </Suspense>
-                          </div>
-                        </div>
-
-                        {/* Throttle & Brake row */}
-                        <div className="h-36 border-b border-border flex">
-                          <div className="flex-1 border-r border-border px-2 pt-1 pb-1 overflow-hidden">
-                            <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-xs font-medium">Throttle</span>
-                              <span className="text-[10px] text-muted-foreground">%</span>
-                            </div>
-                            <div className="h-[calc(100%-16px)]">
-                              <SyncedChart
-                                data={telemetryData}
-                                series={throttleSeries}
-                                yDomain={[0, 100]}
-                                unit="%"
-                                formatValue={formatDecimal0}
-                                xMin={zoomXMin}
-                                xMax={zoomXMax}
-                                onZoomChange={handleZoomChange}
-                                originalXMax={originalXMax ?? undefined}
-                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                              />
-                            </div>
-                          </div>
-                          <div className="flex-1 px-2 pt-1 pb-1 overflow-hidden">
-                            <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-xs font-medium">Brake</span>
-                              <span className="text-[10px] text-muted-foreground">%</span>
-                            </div>
-                            <div className="h-[calc(100%-16px)]">
-                              <SyncedChart
-                                data={telemetryData}
-                                series={brakeSeries}
-                                yDomain={[0, 100]}
-                                unit="%"
-                                formatValue={formatDecimal0}
-                                xMin={zoomXMin}
-                                xMax={zoomXMax}
-                                onZoomChange={handleZoomChange}
-                                originalXMax={originalXMax ?? undefined}
-                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Time delta & Line distance row */}
-                        <div className="h-36 flex">
-                          <div className="flex-1 border-r border-border px-2 pt-1 pb-1 overflow-hidden">
-                            <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-xs font-medium">Time Delta</span>
-                              <span className="text-[10px] text-muted-foreground">sec</span>
-                            </div>
-                            <div className="h-[calc(100%-16px)]">
-                              <SyncedChart
-                                data={telemetryData}
-                                series={timeDeltaSeries}
-                                showYAxisRight={true}
-                                unit=" sec"
-                                xMin={zoomXMin}
-                                xMax={zoomXMax}
-                                onZoomChange={handleZoomChange}
-                                originalXMax={originalXMax ?? undefined}
-                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                              />
-                            </div>
-                          </div>
-                          <div className="flex-1 px-2 pt-1 pb-1 overflow-hidden">
-                            <div className="flex items-center justify-between mb-0.5">
-                              <span className="text-xs font-medium">Line Distance</span>
-                              <span className="text-[10px] text-muted-foreground">m</span>
-                            </div>
-                            <div className="h-[calc(100%-16px)]">
-                              <SyncedChart
-                                data={telemetryData}
-                                series={lineDistSeries}
-                                yDomain={[-15, 15]}
-                                showYAxisRight={true}
-                                unit=" m"
-                                xMin={zoomXMin}
-                                xMax={zoomXMax}
-                                onZoomChange={handleZoomChange}
-                                originalXMax={originalXMax ?? undefined}
-                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Right column: Gear, RPM, Steering */}
-                      <div className="w-80 border-l border-border flex flex-col">
-                        <div className="flex-1 min-h-[80px] border-b border-border px-2 pt-1 pb-1 overflow-hidden">
-                          <div className="flex items-center justify-between mb-0.5">
-                            <span className="text-xs font-medium">Gear</span>
-                          </div>
-                          <div className="h-[calc(100%-16px)]">
-                            <SyncedChart
-                              data={telemetryData}
-                              series={gearSeries}
-                              yDomain={[0, 7]}
-                              chartType="stepAfter"
-                              formatValue={formatDecimal0}
-                              xMin={zoomXMin}
-                              xMax={zoomXMax}
-                              onZoomChange={handleZoomChange}
-                              originalXMax={originalXMax ?? undefined}
-                              margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                            />
-                          </div>
-                        </div>
-                        <div className="flex-1 min-h-[80px] border-b border-border px-2 pt-1 pb-1 overflow-hidden">
-                          <div className="flex items-center justify-between mb-0.5">
-                            <span className="text-xs font-medium">RPM</span>
-                            <span className="text-[10px] text-muted-foreground">x1000</span>
-                          </div>
-                          <div className="h-[calc(100%-16px)]">
-                            <SyncedChart
-                              data={telemetryData}
-                              series={rpmSeries}
-                              yDomain={[2, 8]}
-                              unit=" rpm"
-                              formatValue={formatDecimal0}
-                              xMin={zoomXMin}
-                              xMax={zoomXMax}
-                              onZoomChange={handleZoomChange}
-                              originalXMax={originalXMax ?? undefined}
-                              margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                            />
-                          </div>
-                        </div>
-                        <div className="flex-1 min-h-[80px] px-2 pt-1 pb-1 overflow-hidden">
-                          <div className="flex items-center justify-between mb-0.5">
-                            <span className="text-xs font-medium">Steering</span>
-                            <span className="text-[10px] text-muted-foreground">deg</span>
-                          </div>
-                          <div className="h-[calc(100%-16px)]">
-                            <SyncedChart
-                              data={telemetryData}
-                              series={steeringSeries}
-                              yDomain={[-200, 200]}
-                              unit="°"
-                              formatValue={formatDecimal1}
-                              xMin={zoomXMin}
-                              xMax={zoomXMax}
-                              onZoomChange={handleZoomChange}
-                              originalXMax={originalXMax ?? undefined}
-                              margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-                            />
-                          </div>
-                        </div>
-                      </div>
+                          </DraggableChart>
+                        )
+                      })}
                     </div>
 
                     {/* Sector indicators at bottom */}
