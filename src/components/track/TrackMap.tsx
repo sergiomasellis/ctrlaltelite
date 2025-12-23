@@ -7,12 +7,16 @@ interface TrackMapProps {
   lapDataByLap: Record<number, IbtLapData> | null
   selectedLaps: number[]
   lapColors: Record<number, string>
+  zoomXMin?: number | null
+  zoomXMax?: number | null
 }
 
 export function TrackMap({
   lapDataByLap,
   selectedLaps,
   lapColors,
+  zoomXMin,
+  zoomXMax,
 }: TrackMapProps) {
   // Ref for the cursor group element - updated via subscription
   const cursorGroupRef = useRef<SVGGElement>(null)
@@ -132,6 +136,28 @@ export function TrackMap({
       return { lap, path, color, lapData }
     }).filter((p): p is { lap: number; path: string; color: string; lapData: IbtLapData } => p != null && p.path !== "")
   }, [lapDataByLap, selectedLaps, lapColors, gpsToSvgPath])
+
+  // Generate highlighted sector path for active zoom range
+  const sectorHighlightPath = useMemo(() => {
+    // Only show highlight if zoom is active (not full view)
+    if (zoomXMin == null || zoomXMax == null || !lapDataByLap || selectedLaps.length === 0) return null
+    
+    const refLap = selectedLaps[0]
+    const lapData = lapDataByLap[refLap]
+    if (!lapData) return null
+
+    // Filter points that fall within the zoom range (active sector)
+    const sectorPoints = lapData.byDist.filter((p) => {
+      return p.distanceKm >= zoomXMin && p.distanceKm <= zoomXMax
+    })
+
+    if (sectorPoints.length === 0) return null
+
+    const path = gpsToSvgPath(sectorPoints)
+    if (!path) return null
+
+    return path
+  }, [zoomXMin, zoomXMax, lapDataByLap, selectedLaps, gpsToSvgPath])
 
   // Build array of valid GPS points for interpolation (memoized separately for performance)
   const validGpsPoints = useMemo(() => {
@@ -261,6 +287,20 @@ export function TrackMap({
           opacity="0.9"
         />
       ))}
+      
+      {/* Render highlighted sector overlay when zoomed */}
+      {sectorHighlightPath && (
+        <path
+          d={sectorHighlightPath}
+          fill="none"
+          stroke={refLapColor}
+          strokeWidth="6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity="0.8"
+          style={{ filter: 'drop-shadow(0 0 4px currentColor)' }}
+        />
+      )}
       
       {/* Render cursor dot for reference lap only - updated via subscription for performance */}
       <g ref={cursorGroupRef} style={{ pointerEvents: "none", display: "none" }}>

@@ -67,6 +67,11 @@ export function LapAnalysis() {
     setZoomXMax(null)
   }, [])
 
+  const handleSectorClick = useCallback((sectorStartKm: number, sectorEndKm: number) => {
+    setZoomXMin(sectorStartKm)
+    setZoomXMax(sectorEndKm)
+  }, [])
+
   const toggleLap = useCallback((lap: number) => {
     setSelectedLaps((prev) => {
       if (prev.includes(lap)) return prev.filter((x) => x !== lap)
@@ -551,6 +556,8 @@ export function LapAnalysis() {
                         lapDataByLap={ibtLapDataByLap}
                         selectedLaps={selectedLaps}
                         lapColors={lapColors}
+                        zoomXMin={zoomXMin}
+                        zoomXMax={zoomXMax}
                       />
                     </Suspense>
                   ) : (
@@ -586,12 +593,12 @@ export function LapAnalysis() {
                       {/* Main comparison charts - top row */}
                       <div className="flex-1 flex flex-col min-w-0">
                         {/* Speed chart - largest and most important */}
-                        <div className="flex-1 min-h-[120px] border-b border-border p-2 overflow-hidden">
-                          <div className="flex items-center justify-between mb-1">
+                        <div className="flex-1 min-h-[120px] border-b border-border px-2 pt-1 pb-1 overflow-hidden">
+                          <div className="flex items-center justify-between mb-0.5">
                             <span className="text-xs font-medium">Speed</span>
                             <span className="text-[10px] text-muted-foreground">km/h</span>
                           </div>
-                          <div className="h-[calc(100%-18px)] min-h-0">
+                          <div className="h-[calc(100%-16px)] min-h-0">
                             <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">Loading...</div>}>
                               <SyncedChart
                                 data={telemetryData}
@@ -603,6 +610,7 @@ export function LapAnalysis() {
                                 xMax={zoomXMax}
                                 onZoomChange={handleZoomChange}
                                 originalXMax={originalXMax ?? undefined}
+                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                               />
                             </Suspense>
                           </div>
@@ -610,12 +618,12 @@ export function LapAnalysis() {
 
                         {/* Throttle & Brake row */}
                         <div className="h-36 border-b border-border flex">
-                          <div className="flex-1 border-r border-border p-2 overflow-hidden">
-                            <div className="flex items-center justify-between mb-1">
+                          <div className="flex-1 border-r border-border px-2 pt-1 pb-1 overflow-hidden">
+                            <div className="flex items-center justify-between mb-0.5">
                               <span className="text-xs font-medium">Throttle</span>
                               <span className="text-[10px] text-muted-foreground">%</span>
                             </div>
-                            <div className="h-[calc(100%-18px)]">
+                            <div className="h-[calc(100%-16px)]">
                               <SyncedChart
                                 data={telemetryData}
                                 series={throttleSeries}
@@ -626,15 +634,16 @@ export function LapAnalysis() {
                                 xMax={zoomXMax}
                                 onZoomChange={handleZoomChange}
                                 originalXMax={originalXMax ?? undefined}
+                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                               />
                             </div>
                           </div>
-                          <div className="flex-1 p-2 overflow-hidden">
-                            <div className="flex items-center justify-between mb-1">
+                          <div className="flex-1 px-2 pt-1 pb-1 overflow-hidden">
+                            <div className="flex items-center justify-between mb-0.5">
                               <span className="text-xs font-medium">Brake</span>
                               <span className="text-[10px] text-muted-foreground">%</span>
                             </div>
-                            <div className="h-[calc(100%-18px)]">
+                            <div className="h-[calc(100%-16px)]">
                               <SyncedChart
                                 data={telemetryData}
                                 series={brakeSeries}
@@ -645,6 +654,7 @@ export function LapAnalysis() {
                                 xMax={zoomXMax}
                                 onZoomChange={handleZoomChange}
                                 originalXMax={originalXMax ?? undefined}
+                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                               />
                             </div>
                           </div>
@@ -652,12 +662,12 @@ export function LapAnalysis() {
 
                         {/* Time delta & Line distance row */}
                         <div className="h-36 flex">
-                          <div className="flex-1 border-r border-border p-2 overflow-hidden">
-                            <div className="flex items-center justify-between mb-1">
+                          <div className="flex-1 border-r border-border px-2 pt-1 pb-1 overflow-hidden">
+                            <div className="flex items-center justify-between mb-0.5">
                               <span className="text-xs font-medium">Time Delta</span>
                               <span className="text-[10px] text-muted-foreground">sec</span>
                             </div>
-                            <div className="h-[calc(100%-18px)]">
+                            <div className="h-[calc(100%-16px)]">
                               <SyncedChart
                                 data={telemetryData}
                                 series={timeDeltaSeries}
@@ -667,15 +677,16 @@ export function LapAnalysis() {
                                 xMax={zoomXMax}
                                 onZoomChange={handleZoomChange}
                                 originalXMax={originalXMax ?? undefined}
+                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                               />
                             </div>
                           </div>
-                          <div className="flex-1 p-2 overflow-hidden">
-                            <div className="flex items-center justify-between mb-1">
+                          <div className="flex-1 px-2 pt-1 pb-1 overflow-hidden">
+                            <div className="flex items-center justify-between mb-0.5">
                               <span className="text-xs font-medium">Line Distance</span>
                               <span className="text-[10px] text-muted-foreground">m</span>
                             </div>
-                            <div className="h-[calc(100%-18px)]">
+                            <div className="h-[calc(100%-16px)]">
                               <SyncedChart
                                 data={telemetryData}
                                 series={lineDistSeries}
@@ -686,6 +697,7 @@ export function LapAnalysis() {
                                 xMax={zoomXMax}
                                 onZoomChange={handleZoomChange}
                                 originalXMax={originalXMax ?? undefined}
+                                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                               />
                             </div>
                           </div>
@@ -694,11 +706,11 @@ export function LapAnalysis() {
 
                       {/* Right column: Gear, RPM, Steering */}
                       <div className="w-56 border-l border-border flex flex-col">
-                        <div className="flex-1 min-h-[80px] border-b border-border p-2 overflow-hidden">
-                          <div className="flex items-center justify-between mb-1">
+                        <div className="flex-1 min-h-[80px] border-b border-border px-2 pt-1 pb-1 overflow-hidden">
+                          <div className="flex items-center justify-between mb-0.5">
                             <span className="text-xs font-medium">Gear</span>
                           </div>
-                          <div className="h-[calc(100%-18px)]">
+                          <div className="h-[calc(100%-16px)]">
                             <SyncedChart
                               data={telemetryData}
                               series={gearSeries}
@@ -709,15 +721,16 @@ export function LapAnalysis() {
                               xMax={zoomXMax}
                               onZoomChange={handleZoomChange}
                               originalXMax={originalXMax ?? undefined}
+                              margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                             />
                           </div>
                         </div>
-                        <div className="flex-1 min-h-[80px] border-b border-border p-2 overflow-hidden">
-                          <div className="flex items-center justify-between mb-1">
+                        <div className="flex-1 min-h-[80px] border-b border-border px-2 pt-1 pb-1 overflow-hidden">
+                          <div className="flex items-center justify-between mb-0.5">
                             <span className="text-xs font-medium">RPM</span>
                             <span className="text-[10px] text-muted-foreground">x1000</span>
                           </div>
-                          <div className="h-[calc(100%-18px)]">
+                          <div className="h-[calc(100%-16px)]">
                             <SyncedChart
                               data={telemetryData}
                               series={rpmSeries}
@@ -728,15 +741,16 @@ export function LapAnalysis() {
                               xMax={zoomXMax}
                               onZoomChange={handleZoomChange}
                               originalXMax={originalXMax ?? undefined}
+                              margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                             />
                           </div>
                         </div>
-                        <div className="flex-1 min-h-[80px] p-2 overflow-hidden">
-                          <div className="flex items-center justify-between mb-1">
+                        <div className="flex-1 min-h-[80px] px-2 pt-1 pb-1 overflow-hidden">
+                          <div className="flex items-center justify-between mb-0.5">
                             <span className="text-xs font-medium">Steering</span>
                             <span className="text-[10px] text-muted-foreground">deg</span>
                           </div>
-                          <div className="h-[calc(100%-18px)]">
+                          <div className="h-[calc(100%-16px)]">
                             <SyncedChart
                               data={telemetryData}
                               series={steeringSeries}
@@ -747,6 +761,7 @@ export function LapAnalysis() {
                               xMax={zoomXMax}
                               onZoomChange={handleZoomChange}
                               originalXMax={originalXMax ?? undefined}
+                              margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                             />
                           </div>
                         </div>
@@ -754,7 +769,12 @@ export function LapAnalysis() {
                     </div>
 
                     {/* Sector indicators at bottom */}
-                    <SectorIndicators sectorBoundaries={sectorBoundaries} />
+                    <SectorIndicators 
+                      sectorBoundaries={sectorBoundaries}
+                      selectedLaps={selectedLaps}
+                      lapDataByLap={ibtLapDataByLap}
+                      onSectorClick={handleSectorClick}
+                    />
                   </div>
                 </>
               ) : (
