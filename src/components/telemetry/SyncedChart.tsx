@@ -15,6 +15,12 @@ import { sanitizeSvgId, formatYAxisTick } from "./utils"
 import { CustomTooltipContent } from "./CustomTooltip"
 import { CursorOverlay } from "./CursorOverlay"
 
+export type ABSZone = {
+  x1: number
+  x2: number
+  color?: string
+}
+
 // Synced chart component
 export interface SyncedChartProps {
   data: any[]
@@ -30,6 +36,8 @@ export interface SyncedChartProps {
   xMax?: number | null
   onZoomChange?: (xMin: number | null, xMax: number | null) => void
   originalXMax?: number
+  // ABS zones for highlighting ABS activation
+  absZones?: ABSZone[]
 }
 
 // Inner chart component - memoized, uses cursor store for updates
@@ -46,6 +54,7 @@ const SyncedChartInner = memo(function SyncedChartInner({
   originalXMax,
   unit,
   formatValue,
+  absZones = [],
   children,
   innerRef,
 }: SyncedChartProps & { children?: React.ReactNode; innerRef?: React.RefObject<HTMLDivElement | null> }) {
@@ -446,6 +455,20 @@ const SyncedChartInner = memo(function SyncedChartInner({
               fillOpacity={0.05}
             />
           )}
+
+          {/* ABS activation zones */}
+          {absZones.map((zone, idx) => (
+            <ReferenceArea
+              key={`abs-${idx}`}
+              x1={zone.x1}
+              x2={zone.x2}
+              fill={zone.color ?? "hsl(var(--destructive))"}
+              fillOpacity={0.15}
+              stroke={zone.color ?? "hsl(var(--destructive))"}
+              strokeOpacity={0.4}
+              strokeWidth={1}
+            />
+          ))}
 
           {/* Tooltip - cursor line rendered as overlay for performance */}
           <Tooltip
