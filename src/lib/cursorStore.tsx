@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, createContext, useContext, useRef } from "react"
+import { createContext, useContext, useState, useEffect, useCallback } from "react"
 
 // ============================================
 // CURSOR STORE - Bypasses React state for performance

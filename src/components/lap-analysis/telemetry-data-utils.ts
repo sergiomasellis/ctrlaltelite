@@ -1,4 +1,4 @@
-import type { IbtLapData, IbtLapPoint } from "./types"
+import type { IbtLapData } from "./types"
 import { interpolateValue, interpolateGps, perpendicularDistanceMeters, gpsDistanceMeters } from "@/lib/telemetry-utils"
 
 export function prepareTelemetryData(

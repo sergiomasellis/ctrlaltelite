@@ -234,11 +234,13 @@ export function TrackMap({
       C 290 45, 260 60, 230 75
     `
     return (
-      <svg viewBox="0 0 400 320" className="w-full h-full" preserveAspectRatio="xMidYMid meet">
-        <path d={trackPath} fill="none" stroke="#2a2a2a" strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" />
-        <path d={trackPath} fill="none" stroke="#1a1a1a" strokeWidth="24" strokeLinecap="round" strokeLinejoin="round" />
-        <path d={trackPath} fill="none" stroke="#333" strokeWidth="26" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 8" />
-      </svg>
+      <div className="w-full h-full flex items-center justify-center bg-muted/20 rounded-md">
+        <svg viewBox="0 0 400 320" className="w-full h-full max-w-[300px]" preserveAspectRatio="xMidYMid meet">
+          <path d={trackPath} fill="none" stroke="currentColor" strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" className="text-muted/30" />
+          <path d={trackPath} fill="none" stroke="currentColor" strokeWidth="24" strokeLinecap="round" strokeLinejoin="round" className="text-background" />
+          <path d={trackPath} fill="none" stroke="currentColor" strokeWidth="26" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 8" className="text-muted/50" />
+        </svg>
+      </div>
     )
   }
 

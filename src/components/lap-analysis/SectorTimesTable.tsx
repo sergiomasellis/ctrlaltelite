@@ -1,5 +1,3 @@
-import { Button } from "@/components/ui/button"
-import { ArrowUpDown, RefreshCw } from "lucide-react"
 import { formatSectorTime } from "@/lib/telemetry-utils"
 import { LAP_COLOR_PALETTE } from "./constants"
 import type { IbtLapData, SectorBoundary } from "./types"
@@ -18,28 +16,25 @@ export function SectorTimesTable({
   sectorBoundaries,
 }: SectorTimesTableProps) {
   return (
-    <div className="p-3">
+    <div className="p-3 flex-1">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">Sector Times:</span>
-        <div className="flex gap-1">
-          <Button variant="ghost" size="icon-xs">
-            <ArrowUpDown className="h-3 w-3" />
-          </Button>
-          <Button variant="ghost" size="icon-xs">
-            <RefreshCw className="h-3 w-3" />
-          </Button>
-        </div>
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Sector Times</span>
       </div>
-      
-      {/* Lap indicators */}
+
+      {/* Lap color indicators */}
       {selectedLaps.length > 1 && lapDataByLap && (
-        <div className="mb-2 flex items-center gap-4">
+        <div className="mb-3 flex items-center gap-3">
           {selectedLaps.map((lap, idx) => {
             const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
             return (
-              <div key={lap} className="flex items-center gap-1">
-                <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: color }} />
-                <span className="text-[10px]">{idx + 1}</span>
+              <div key={lap} className="flex items-center gap-1.5">
+                <div
+                  className="h-2.5 w-2.5 rounded-sm"
+                  style={{ backgroundColor: color }}
+                />
+                <span className="text-[10px] text-muted-foreground">
+                  {idx === 0 ? "REF" : `L${lap}`}
+                </span>
               </div>
             )
           })}
@@ -47,41 +42,88 @@ export function SectorTimesTable({
       )}
 
       {/* Sector times table */}
-      <div className="space-y-1 text-xs" style={{ "--lap-count": selectedLaps.length } as React.CSSProperties}>
+      <div className="space-y-1 text-xs">
         {selectedLaps.length > 0 && lapDataByLap && sectorBoundaries.length > 0 ? (
           <div className="space-y-2">
             {/* Header */}
-            <div className="grid gap-1 text-[10px] text-muted-foreground border-b border-border pb-1" style={{ gridTemplateColumns: `40px repeat(${selectedLaps.length}, 1fr)` }}>
-              <div>Sec</div>
+            <div
+              className="grid gap-1 text-[10px] text-muted-foreground border-b border-border pb-1"
+              style={{
+                gridTemplateColumns: `40px repeat(${selectedLaps.length}, minmax(60px, 1fr))`,
+              }}
+            >
+              <div className="font-medium uppercase tracking-wide">Sec</div>
               {selectedLaps.map((lap) => (
-                <div key={lap} className="flex items-center gap-1 justify-center">
-                  <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: lapColors[lap] ?? LAP_COLOR_PALETTE[0] }} />
-                  <span>L{lap}</span>
+                <div
+                  key={lap}
+                  className="flex items-center justify-center gap-1"
+                >
+                  <div
+                    className="h-2 w-2 rounded-sm"
+                    style={{
+                      backgroundColor:
+                        lapColors[lap] ?? LAP_COLOR_PALETTE[0],
+                    }}
+                  />
+                  <span className={lap === selectedLaps[0] ? "font-semibold" : ""}>
+                    {lap === selectedLaps[0] ? "REF" : `L${lap}`}
+                  </span>
                 </div>
               ))}
             </div>
+
             {/* Sector rows */}
             {sectorBoundaries.slice(1).map((sector) => {
               const sectorNum = sector.sectorNum
               return (
-                <div key={sectorNum} className="grid gap-1 text-[10px]" style={{ gridTemplateColumns: `40px repeat(${selectedLaps.length}, 1fr)` }}>
-                  <div className="font-medium">S{sectorNum}</div>
+                <div
+                  key={sectorNum}
+                  className="grid gap-1"
+                  style={{
+                    gridTemplateColumns: `40px repeat(${selectedLaps.length}, minmax(60px, 1fr))`,
+                  }}
+                >
+                  <div className="font-medium text-muted-foreground">
+                    S{sectorNum}
+                  </div>
                   {selectedLaps.map((lap) => {
                     const lapData = lapDataByLap[lap]
-                    const sectorTime = lapData?.sectorTimes.find((st) => st.sectorNum === sectorNum)
+                    const sectorTime = lapData?.sectorTimes.find(
+                      (st) => st.sectorNum === sectorNum
+                    )
                     const refLap = selectedLaps[0]
                     const refData = lapDataByLap[refLap]
-                    const refSectorTime = refData?.sectorTimes.find((st) => st.sectorNum === sectorNum)
-                    const delta = sectorTime && refSectorTime ? sectorTime.timeSec - refSectorTime.timeSec : null
+                    const refSectorTime = refData?.sectorTimes.find(
+                      (st) => st.sectorNum === sectorNum
+                    )
+                    const delta =
+                      sectorTime && refSectorTime
+                        ? sectorTime.timeSec - refSectorTime.timeSec
+                        : null
                     const isRef = lap === refLap
+
                     return (
-                      <div key={lap} className={`text-center ${isRef ? "font-medium" : ""}`}>
+                      <div
+                        key={lap}
+                        className={`text-center ${
+                          isRef ? "font-semibold" : ""
+                        }`}
+                      >
                         {sectorTime ? (
                           <div>
-                            <div>{formatSectorTime(sectorTime.timeSec)}</div>
+                            <div className="tabular-nums">
+                              {formatSectorTime(sectorTime.timeSec)}
+                            </div>
                             {!isRef && delta != null && (
-                              <div className={`text-[9px] ${delta >= 0 ? "text-red-400" : "text-green-400"}`}>
-                                {delta >= 0 ? "+" : ""}{delta.toFixed(3)}s
+                              <div
+                                className={`text-[9px] tabular-nums ${
+                                  delta >= 0
+                                    ? "text-red-400"
+                                    : "text-green-400"
+                                }`}
+                              >
+                                {delta >= 0 ? "+" : ""}
+                                {delta.toFixed(3)}s
                               </div>
                             )}
                           </div>
@@ -94,11 +136,35 @@ export function SectorTimesTable({
                 </div>
               )
             })}
+
+            {/* Total row */}
+            <div
+              className="grid gap-1 pt-2 border-t border-border font-medium"
+              style={{
+                gridTemplateColumns: `40px repeat(${selectedLaps.length}, minmax(60px, 1fr))`,
+              }}
+            >
+              <div className="text-muted-foreground">Tot</div>
+              {selectedLaps.map((lap) => {
+                const lapData = lapDataByLap[lap]
+                return (
+                  <div key={lap} className="text-center tabular-nums">
+                    {lapData
+                      ? formatSectorTime(lapData.lapTimeSec)
+                      : "—"}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         ) : selectedLaps.length === 0 ? (
-          <div className="text-muted-foreground text-[10px]">Select laps to compare</div>
+          <div className="text-muted-foreground text-[10px]">
+            Select laps to compare
+          </div>
         ) : sectorBoundaries.length === 0 ? (
-          <div className="text-muted-foreground text-[10px]">No sector data available</div>
+          <div className="text-muted-foreground text-[10px]">
+            No sector data available
+          </div>
         ) : null}
       </div>
     </div>

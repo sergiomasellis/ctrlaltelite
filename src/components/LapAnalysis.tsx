@@ -1,11 +1,12 @@
-import { useState, useCallback, useMemo, useRef } from "react"
+import { useState, useCallback, useMemo, useRef, Suspense, lazy } from "react"
 import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  Bell,
-  HelpCircle,
-  MessageSquare,
+  Upload,
+  FileText,
+  Settings,
+  TrendingUp,
+  BarChart3,
+  Map,
+  AlertCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,17 +16,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import { readIbtHeader, readIbtSamples, readIbtVarHeaders, readIbtSessionInfoYaml, type IbtValue } from "@/lib/ibt"
 import { createCursorStore, CursorStoreContext } from "@/lib/cursorStore"
 import { formatLapTime } from "@/lib/telemetry-utils"
 import { parseSectorBoundaries, calculateSectorTimes } from "@/lib/sector-utils"
-import { SyncedChart } from "@/components/telemetry/SyncedChart"
 import type { ChartSeries } from "@/components/telemetry/types"
-import { TrackMap } from "@/components/track/TrackMap"
 import { TelemetrySourceInput } from "@/components/lap-analysis/TelemetrySourceInput"
 import { LapSelector } from "@/components/lap-analysis/LapSelector"
-import { SelectedLapsSummary } from "@/components/lap-analysis/SelectedLapsSummary"
 import { SectorTimesTable } from "@/components/lap-analysis/SectorTimesTable"
 import { LapStatsBar } from "@/components/lap-analysis/LapStatsBar"
 import { LapComparisonLegend } from "@/components/lap-analysis/LapComparisonLegend"
@@ -34,6 +31,10 @@ import { prepareTelemetryData } from "@/components/lap-analysis/telemetry-data-u
 import { LAP_COLOR_PALETTE } from "@/components/lap-analysis/constants"
 import type { IbtLapData, IbtLapPoint, SectorBoundary } from "@/components/lap-analysis/types"
 
+// Lazy load chart component for better initial load
+const SyncedChart = lazy(() => import("@/components/telemetry/SyncedChart").then(module => ({ default: module.SyncedChart })))
+const TrackMap = lazy(() => import("@/components/track/TrackMap").then(module => ({ default: module.TrackMap })))
+
 export function LapAnalysis() {
   // Create cursor store once - bypasses React state for performance
   const cursorStoreRef = useRef<ReturnType<typeof createCursorStore> | null>(null)
@@ -41,7 +42,7 @@ export function LapAnalysis() {
     cursorStoreRef.current = createCursorStore()
   }
   const cursorStore = cursorStoreRef.current
-  
+
   const [ibtLapDataByLap, setIbtLapDataByLap] = useState<Record<number, IbtLapData> | null>(null)
   const [ibtLaps, setIbtLaps] = useState<number[]>([])
   const [selectedLaps, setSelectedLaps] = useState<number[]>([])
@@ -417,89 +418,75 @@ export function LapAnalysis() {
   return (
     <CursorStoreContext.Provider value={cursorStore}>
     <div className="flex h-screen flex-col bg-background text-foreground">
-      {/* Header */}
-      <header className="flex h-12 items-center justify-between border-b border-border px-4">
-        <div className="flex items-center gap-6">
+      {/* Compact header with integrated navigation */}
+      <header className="flex h-12 items-center justify-between border-b border-border px-4 bg-muted/30">
+        <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded bg-primary text-primary-foreground text-xs font-bold">
-              ⌘
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground text-xs font-bold">
+              CAE
             </div>
-            <span className="text-sm font-semibold">CTRL ALT ELITE</span>
-            <span className="text-xs text-muted-foreground">alpha</span>
+            <span className="text-sm font-semibold">Ctrl Alt Elite</span>
           </div>
-          <nav className="flex items-center gap-1">
-            {["Overview", "Analyze", "Laps", "Setups", "Data packs", "Teams", "Streams"].map(
-              (item) => (
-                <Button
-                  key={item}
-                  variant="ghost"
-                  size="sm"
-                  className={item === "Analyze" ? "bg-muted" : ""}
-                >
-                  {item}
-                  {item === "Laps" && <ChevronDown className="ml-1 h-3 w-3" />}
-                </Button>
-              )
-            )}
+          <nav className="flex items-center gap-0.5">
+            {[
+              { icon: BarChart3, label: "Overview", active: false },
+              { icon: TrendingUp, label: "Analyze", active: true },
+              { icon: Map, label: "Track", active: false },
+            ].map(({ icon: Icon, label, active }) => (
+              <Button
+                key={label}
+                variant={active ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 gap-1.5"
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </Button>
+            ))}
           </nav>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon-sm">
-            <Bell className="h-4 w-4" />
+          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground">
+            <Settings className="h-3.5 w-3.5" />
+            Settings
           </Button>
-          <Button variant="ghost" size="icon-sm">
-            <HelpCircle className="h-4 w-4" />
-          </Button>
-          <div className="flex items-center gap-2 rounded-full bg-muted px-2 py-1">
-            <div className="h-6 w-6 rounded-full bg-primary" />
-            <span className="text-xs">Sergio</span>
-            <ChevronDown className="h-3 w-3" />
-          </div>
         </div>
       </header>
 
-      {/* Sub header */}
-      <div className="flex h-10 items-center justify-between border-b border-border px-4">
+      {/* Secondary toolbar - context-sensitive */}
+      <div className="flex h-10 items-center justify-between border-b border-border px-4 bg-background/50">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm">
-            Navigate
-          </Button>
-          <Button variant="ghost" size="icon-sm">
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Select defaultValue="driving-style" items={[
-            { label: "Driving style", value: "driving-style" },
-            { label: "Performance", value: "performance" },
-            { label: "Consistency", value: "consistency" },
-          ]}>
-            <SelectTrigger className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="driving-style">Driving style</SelectItem>
-              <SelectItem value="performance">Performance</SelectItem>
-              <SelectItem value="consistency">Consistency</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="ghost" size="icon-sm">
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+          {ibtLapDataByLap ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Analysis mode:</span>
+              <Select defaultValue="driving-style">
+                <SelectTrigger className="h-6 w-40 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="driving-style">Driving Style</SelectItem>
+                  <SelectItem value="performance">Performance</SelectItem>
+                  <SelectItem value="consistency">Consistency</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">Load telemetry data to begin analysis</span>
+          )}
         </div>
-        <div className="text-sm font-medium">Untitled lap analysis</div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon-sm">
-            <MessageSquare className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="sm">
-            Configure
-          </Button>
-        </div>
+        {ibtLapDataByLap && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span>{ibtLaps.length} laps loaded</span>
+            <span className="text-border">|</span>
+            <span>{selectedLaps.length} selected</span>
+          </div>
+        )}
       </div>
 
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar */}
-        <aside className="flex w-64 flex-col border-r border-border overflow-y-auto">
+        {/* Left sidebar - data source and lap selection */}
+        <aside className="flex w-56 flex-col border-r border-border overflow-y-auto bg-muted/10">
           <TelemetrySourceInput
             onFileSelect={(file) => loadIbt(file, file.name)}
             onLoadSample={loadSample}
@@ -509,29 +496,25 @@ export function LapAnalysis() {
             error={ibtError}
           />
 
-          <LapSelector
-            laps={ibtLaps}
-            selectedLaps={selectedLaps}
-            lapColors={lapColors}
-            lapDataByLap={ibtLapDataByLap}
-            onToggleLap={toggleLap}
-            onClearSelection={clearSelectedLaps}
-          />
+          {ibtLapDataByLap && (
+            <>
+              <LapSelector
+                laps={ibtLaps}
+                selectedLaps={selectedLaps}
+                lapColors={lapColors}
+                lapDataByLap={ibtLapDataByLap}
+                onToggleLap={toggleLap}
+                onClearSelection={clearSelectedLaps}
+              />
 
-          <SelectedLapsSummary
-            selectedLaps={selectedLaps}
-            lapDataByLap={ibtLapDataByLap}
-            lapColors={lapColors}
-          />
-
-          <Separator />
-
-          <SectorTimesTable
-            selectedLaps={selectedLaps}
-            lapDataByLap={ibtLapDataByLap}
-            lapColors={lapColors}
-            sectorBoundaries={sectorBoundaries}
-          />
+              <SectorTimesTable
+                selectedLaps={selectedLaps}
+                lapDataByLap={ibtLapDataByLap}
+                lapColors={lapColors}
+                sectorBoundaries={sectorBoundaries}
+              />
+            </>
+          )}
         </aside>
 
         {/* Center content */}
@@ -550,209 +533,297 @@ export function LapAnalysis() {
             />
           )}
 
-          {/* Main content area - 2 column layout */}
+          {/* Main content area - optimized 2 column layout */}
           <div className="flex flex-1 overflow-hidden">
-            {/* Left: Track map */}
-            <div className="flex flex-col w-80 border-r border-border">
-              <div className="relative flex-shrink-0 h-64 border-b border-border p-2">
+            {/* Left: Track map and legend */}
+            <div className="flex flex-col w-64 border-r border-border">
+              {/* Track map */}
+              <div className="relative flex-shrink-0 h-48 border-b border-border p-2">
                 <div className="absolute left-2 top-2 z-10">
-                  <Button variant="outline" size="icon-xs" className="h-5 w-5">
-                    <span className="text-[8px]">≡</span>
+                  <Button variant="secondary" size="icon-xs" className="h-5 w-5">
+                    <Map className="h-3 w-3" />
                   </Button>
                 </div>
                 <div className="w-full h-full">
-                  <TrackMap 
-                    lapDataByLap={ibtLapDataByLap} 
-                    selectedLaps={selectedLaps} 
-                    lapColors={lapColors}
-                  />
+                  {ibtLapDataByLap ? (
+                    <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">Loading map...</div>}>
+                      <TrackMap
+                        lapDataByLap={ibtLapDataByLap}
+                        selectedLaps={selectedLaps}
+                        lapColors={lapColors}
+                      />
+                    </Suspense>
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-muted/30 rounded-md">
+                      <div className="text-center">
+                        <Map className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                        <p className="text-xs text-muted-foreground">Track map</p>
+                        <p className="text-[10px] text-muted-foreground/70">Load data to view</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <LapComparisonLegend
-                selectedLaps={selectedLaps}
-                lapDataByLap={ibtLapDataByLap}
-                lapColors={lapColors}
-                sectorBoundaries={sectorBoundaries}
-              />
+              {/* Legend */}
+              {ibtLapDataByLap && (
+                <LapComparisonLegend
+                  selectedLaps={selectedLaps}
+                  lapDataByLap={ibtLapDataByLap}
+                  lapColors={lapColors}
+                  sectorBoundaries={sectorBoundaries}
+                />
+              )}
             </div>
 
             {/* Right: Charts area */}
             <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="flex flex-1">
-                {/* Main comparison charts - top row */}
-                <div className="flex-1 flex flex-col min-w-0">
-                  {/* Speed chart - largest */}
-                  <div className="flex-1 border-b border-border p-2 overflow-hidden min-h-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-muted-foreground font-medium">Speed</span>
+              {ibtLapDataByLap ? (
+                <>
+                  {/* Charts container with scroll if needed */}
+                  <div className="flex-1 flex flex-col overflow-y-auto">
+                    <div className="flex flex-1">
+                      {/* Main comparison charts - top row */}
+                      <div className="flex-1 flex flex-col min-w-0">
+                        {/* Speed chart - largest and most important */}
+                        <div className="flex-1 min-h-[120px] border-b border-border p-2 overflow-hidden">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium">Speed</span>
+                            <span className="text-[10px] text-muted-foreground">km/h</span>
+                          </div>
+                          <div className="h-[calc(100%-18px)] min-h-0">
+                            <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">Loading...</div>}>
+                              <SyncedChart
+                                data={telemetryData}
+                                series={speedSeries}
+                                yDomain={[0, 250]}
+                                unit=" km/h"
+                                formatValue={formatDecimal1}
+                                xMin={zoomXMin}
+                                xMax={zoomXMax}
+                                onZoomChange={handleZoomChange}
+                                originalXMax={originalXMax ?? undefined}
+                              />
+                            </Suspense>
+                          </div>
+                        </div>
+
+                        {/* Throttle & Brake row */}
+                        <div className="h-36 border-b border-border flex">
+                          <div className="flex-1 border-r border-border p-2 overflow-hidden">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium">Throttle</span>
+                              <span className="text-[10px] text-muted-foreground">%</span>
+                            </div>
+                            <div className="h-[calc(100%-18px)]">
+                              <SyncedChart
+                                data={telemetryData}
+                                series={throttleSeries}
+                                yDomain={[0, 100]}
+                                unit="%"
+                                formatValue={formatDecimal0}
+                                xMin={zoomXMin}
+                                xMax={zoomXMax}
+                                onZoomChange={handleZoomChange}
+                                originalXMax={originalXMax ?? undefined}
+                              />
+                            </div>
+                          </div>
+                          <div className="flex-1 p-2 overflow-hidden">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium">Brake</span>
+                              <span className="text-[10px] text-muted-foreground">%</span>
+                            </div>
+                            <div className="h-[calc(100%-18px)]">
+                              <SyncedChart
+                                data={telemetryData}
+                                series={brakeSeries}
+                                yDomain={[0, 100]}
+                                unit="%"
+                                formatValue={formatDecimal0}
+                                xMin={zoomXMin}
+                                xMax={zoomXMax}
+                                onZoomChange={handleZoomChange}
+                                originalXMax={originalXMax ?? undefined}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Time delta & Line distance row */}
+                        <div className="h-36 flex">
+                          <div className="flex-1 border-r border-border p-2 overflow-hidden">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium">Time Delta</span>
+                              <span className="text-[10px] text-muted-foreground">sec</span>
+                            </div>
+                            <div className="h-[calc(100%-18px)]">
+                              <SyncedChart
+                                data={telemetryData}
+                                series={timeDeltaSeries}
+                                showYAxisRight={true}
+                                unit=" sec"
+                                xMin={zoomXMin}
+                                xMax={zoomXMax}
+                                onZoomChange={handleZoomChange}
+                                originalXMax={originalXMax ?? undefined}
+                              />
+                            </div>
+                          </div>
+                          <div className="flex-1 p-2 overflow-hidden">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium">Line Distance</span>
+                              <span className="text-[10px] text-muted-foreground">m</span>
+                            </div>
+                            <div className="h-[calc(100%-18px)]">
+                              <SyncedChart
+                                data={telemetryData}
+                                series={lineDistSeries}
+                                yDomain={[-15, 15]}
+                                showYAxisRight={true}
+                                unit=" m"
+                                xMin={zoomXMin}
+                                xMax={zoomXMax}
+                                onZoomChange={handleZoomChange}
+                                originalXMax={originalXMax ?? undefined}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right column: Gear, RPM, Steering */}
+                      <div className="w-56 border-l border-border flex flex-col">
+                        <div className="flex-1 min-h-[80px] border-b border-border p-2 overflow-hidden">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium">Gear</span>
+                          </div>
+                          <div className="h-[calc(100%-18px)]">
+                            <SyncedChart
+                              data={telemetryData}
+                              series={gearSeries}
+                              yDomain={[0, 7]}
+                              chartType="stepAfter"
+                              formatValue={formatDecimal0}
+                              xMin={zoomXMin}
+                              xMax={zoomXMax}
+                              onZoomChange={handleZoomChange}
+                              originalXMax={originalXMax ?? undefined}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex-1 min-h-[80px] border-b border-border p-2 overflow-hidden">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium">RPM</span>
+                            <span className="text-[10px] text-muted-foreground">x1000</span>
+                          </div>
+                          <div className="h-[calc(100%-18px)]">
+                            <SyncedChart
+                              data={telemetryData}
+                              series={rpmSeries}
+                              yDomain={[2, 8]}
+                              unit=" rpm"
+                              formatValue={formatDecimal0}
+                              xMin={zoomXMin}
+                              xMax={zoomXMax}
+                              onZoomChange={handleZoomChange}
+                              originalXMax={originalXMax ?? undefined}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex-1 min-h-[80px] p-2 overflow-hidden">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium">Steering</span>
+                            <span className="text-[10px] text-muted-foreground">deg</span>
+                          </div>
+                          <div className="h-[calc(100%-18px)]">
+                            <SyncedChart
+                              data={telemetryData}
+                              series={steeringSeries}
+                              yDomain={[-200, 200]}
+                              unit="°"
+                              formatValue={formatDecimal1}
+                              xMin={zoomXMin}
+                              xMax={zoomXMax}
+                              onZoomChange={handleZoomChange}
+                              originalXMax={originalXMax ?? undefined}
+                            />
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="h-[calc(100%-20px)] min-h-0">
-                      <SyncedChart
-                        data={telemetryData}
-                        series={speedSeries}
-                        yDomain={[0, 250]}
-                        unit=" km/h"
-                        formatValue={formatDecimal1}
-                        xMin={zoomXMin}
-                        xMax={zoomXMax}
-                        onZoomChange={handleZoomChange}
-                        originalXMax={originalXMax ?? undefined}
+
+                    {/* Sector indicators at bottom */}
+                    <SectorIndicators sectorBoundaries={sectorBoundaries} />
+                  </div>
+                </>
+              ) : (
+                /* Empty state - when no data loaded */
+                <div className="flex-1 flex items-center justify-center bg-muted/20">
+                  <div className="text-center max-w-md">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-muted mb-4">
+                      <Upload className="h-8 w-8 text-muted-foreground" />
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2">Load Telemetry Data</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Upload an .ibt file to analyze lap times, compare performance, and visualize telemetry data.
+                    </p>
+                    <div className="flex items-center justify-center gap-3">
+                      <Button onClick={loadSample} disabled={ibtLoading} className="gap-2">
+                        <FileText className="h-4 w-4" />
+                        Load Sample Data
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="gap-2 cursor-pointer"
+                        onClick={() => document.getElementById('ibt-file-input')?.click()}
+                      >
+                        <Upload className="h-4 w-4" />
+                        Upload .ibt File
+                      </Button>
+                      <input
+                        id="ibt-file-input"
+                        type="file"
+                        accept=".ibt"
+                        className="hidden"
+                        disabled={ibtLoading}
+                        onChange={(e) => {
+                          const f = e.currentTarget.files?.[0]
+                          if (!f) return
+                          loadIbt(f, f.name)
+                        }}
                       />
                     </div>
-                  </div>
-
-                  {/* Throttle & Brake row */}
-                  <div className="h-40 border-b border-border flex">
-                    <div className="flex-1 border-r border-border p-2 overflow-hidden">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-muted-foreground font-medium">Throttle</span>
+                    {ibtLoading && (
+                      <div className="mt-4">
+                        <div className="text-xs text-muted-foreground animate-pulse">Loading telemetry data...</div>
                       </div>
-                      <div className="h-[calc(100%-20px)]">
-                        <SyncedChart
-                          data={telemetryData}
-                          series={throttleSeries}
-                          yDomain={[0, 100]}
-                          unit="%"
-                          formatValue={formatDecimal0}
-                          xMin={zoomXMin}
-                          xMax={zoomXMax}
-                          onZoomChange={handleZoomChange}
-                          originalXMax={originalXMax ?? undefined}
-                        />
+                    )}
+                    {ibtError && (
+                      <div className="mt-4 p-3 rounded-md bg-destructive/10 border border-destructive/20">
+                        <div className="flex items-center gap-2 text-sm text-destructive">
+                          <AlertCircle className="h-4 w-4" />
+                          {ibtError}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex-1 p-2 overflow-hidden">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-muted-foreground font-medium">Brake</span>
-                      </div>
-                      <div className="h-[calc(100%-20px)]">
-                        <SyncedChart
-                          data={telemetryData}
-                          series={brakeSeries}
-                          yDomain={[0, 100]}
-                          unit="%"
-                          formatValue={formatDecimal0}
-                          xMin={zoomXMin}
-                          xMax={zoomXMax}
-                          onZoomChange={handleZoomChange}
-                          originalXMax={originalXMax ?? undefined}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Time delta & Line distance row */}
-                  <div className="h-40 flex">
-                    <div className="flex-1 border-r border-border p-2 overflow-hidden">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-muted-foreground font-medium">Time Delta</span>
-                      </div>
-                      <div className="h-[calc(100%-20px)]">
-                        <SyncedChart
-                          data={telemetryData}
-                          series={timeDeltaSeries}
-                          showYAxisRight={true}
-                          unit=" sec"
-                          xMin={zoomXMin}
-                          xMax={zoomXMax}
-                          onZoomChange={handleZoomChange}
-                          originalXMax={originalXMax ?? undefined}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex-1 p-2 overflow-hidden">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-muted-foreground font-medium">Line Distance</span>
-                      </div>
-                      <div className="h-[calc(100%-20px)]">
-                        <SyncedChart
-                          data={telemetryData}
-                          series={lineDistSeries}
-                          yDomain={[-15, 15]}
-                          showYAxisRight={true}
-                          unit=" m"
-                          xMin={zoomXMin}
-                          xMax={zoomXMax}
-                          onZoomChange={handleZoomChange}
-                          originalXMax={originalXMax ?? undefined}
-                        />
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </div>
-
-                {/* Right column: Gear, RPM, Steering */}
-                <div className="w-64 border-l border-border flex flex-col">
-                  <div className="flex-1 border-b border-border p-2 overflow-hidden min-h-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-muted-foreground font-medium">Gear</span>
-                    </div>
-                    <div className="h-[calc(100%-20px)]">
-                      <SyncedChart
-                        data={telemetryData}
-                        series={gearSeries}
-                        yDomain={[0, 7]}
-                        chartType="stepAfter"
-                        formatValue={formatDecimal0}
-                        xMin={zoomXMin}
-                        xMax={zoomXMax}
-                        onZoomChange={handleZoomChange}
-                        originalXMax={originalXMax ?? undefined}
-                      />
-                    </div>
-                  </div>
-                  <div className="flex-1 border-b border-border p-2 overflow-hidden min-h-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-muted-foreground font-medium">RPM</span>
-                    </div>
-                    <div className="h-[calc(100%-20px)]">
-                      <SyncedChart
-                        data={telemetryData}
-                        series={rpmSeries}
-                        yDomain={[2000, 8000]}
-                        unit=" rpm"
-                        formatValue={formatDecimal0}
-                        xMin={zoomXMin}
-                        xMax={zoomXMax}
-                        onZoomChange={handleZoomChange}
-                        originalXMax={originalXMax ?? undefined}
-                      />
-                    </div>
-                  </div>
-                  <div className="flex-1 p-2 overflow-hidden min-h-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-muted-foreground font-medium">Steering</span>
-                    </div>
-                    <div className="h-[calc(100%-20px)]">
-                      <SyncedChart
-                        data={telemetryData}
-                        series={steeringSeries}
-                        yDomain={[-200, 200]}
-                        unit="°"
-                        formatValue={formatDecimal1}
-                        xMin={zoomXMin}
-                        xMax={zoomXMax}
-                        onZoomChange={handleZoomChange}
-                        originalXMax={originalXMax ?? undefined}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <SectorIndicators sectorBoundaries={sectorBoundaries} />
-                      </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="flex h-8 items-center justify-between border-t border-border px-4">
-        <Button variant="ghost" size="icon-xs">
-          <MessageSquare className="h-3 w-3" />
-        </Button>
+      {/* Minimal footer */}
+      <footer className="flex h-6 items-center justify-between border-t border-border px-4 text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <span>Ctrl Alt Elite</span>
+        </div>
         <div className="flex-1" />
+        <div className="flex items-center gap-4">
+          {ibtSourceLabel && <span>{ibtSourceLabel}</span>}
+        </div>
       </footer>
     </div>
     </CursorStoreContext.Provider>
