@@ -10,6 +10,13 @@ import {
   ArrowUpDown,
   RefreshCw,
   MessageSquare,
+  Gauge,
+  Thermometer,
+  Activity,
+  Zap,
+  Layers,
+  Maximize2,
+  Minimize2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -1647,6 +1654,29 @@ export function LapAnalysis() {
   const formatDecimal1 = useCallback((v: number) => v.toFixed(1), [])
   const formatDecimal0 = useCallback((v: number) => v.toFixed(0), [])
 
+  // Calculate summary statistics for reference lap
+  const refLapStats = useMemo(() => {
+    if (!ibtLapDataByLap || selectedLaps.length === 0) return null
+    const refLap = selectedLaps[0]
+    const refData = ibtLapDataByLap[refLap]
+    if (!refData) return null
+
+    const speeds = refData.byDist.map(p => p.speedKmh).filter((v): v is number => v != null)
+    const throttles = refData.byDist.map(p => p.throttlePct).filter((v): v is number => v != null)
+    const brakes = refData.byDist.map(p => p.brakePct).filter((v): v is number => v != null)
+    const rpms = refData.byDist.map(p => p.rpm).filter((v): v is number => v != null)
+
+    return {
+      lapTime: formatLapTime(refData.lapTimeSec),
+      avgSpeed: speeds.length > 0 ? speeds.reduce((a, b) => a + b, 0) / speeds.length : 0,
+      maxSpeed: speeds.length > 0 ? Math.max(...speeds) : 0,
+      avgThrottle: throttles.length > 0 ? throttles.reduce((a, b) => a + b, 0) / throttles.length : 0,
+      avgBrake: brakes.length > 0 ? brakes.reduce((a, b) => a + b, 0) / brakes.length : 0,
+      maxRpm: rpms.length > 0 ? Math.max(...rpms) : 0,
+      distanceKm: refData.distanceKm,
+    }
+  }, [ibtLapDataByLap, selectedLaps])
+
   return (
     <CursorStoreContext.Provider value={cursorStore}>
     <div className="flex h-screen flex-col bg-background text-foreground">
@@ -1732,7 +1762,7 @@ export function LapAnalysis() {
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar */}
-        <aside className="flex w-64 flex-col border-r border-border">
+        <aside className="flex w-64 flex-col border-r border-border overflow-y-auto">
           {/* Telemetry source */}
           <div className="border-b border-border p-3">
             <div className="mb-2 flex items-center justify-between">
@@ -1757,9 +1787,19 @@ export function LapAnalysis() {
               </Button>
             </div>
 
-            {ibtLaps.length > 0 && (
-              <div className="mt-2 space-y-1">
-                <div className="text-[10px] text-muted-foreground mb-1">Select laps to compare:</div>
+            {ibtProgress && (
+              <div className="mt-2 text-[10px] text-muted-foreground">
+                Parsing… {Math.floor((ibtProgress.processedRecords / ibtProgress.totalRecords) * 100)}%
+              </div>
+            )}
+            {ibtError && <div className="mt-2 text-[10px] text-red-400">{ibtError}</div>}
+          </div>
+
+          {/* Lap selection */}
+          {ibtLaps.length > 0 && (
+            <div className="border-b border-border p-3">
+              <div className="mb-2 text-xs font-medium text-muted-foreground">Select laps to compare:</div>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
                 {ibtLaps.map((lap) => {
                   const isSelected = selectedLaps.includes(lap)
                   const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
@@ -1781,44 +1821,37 @@ export function LapAnalysis() {
                         )}
                       </div>
                       {isSelected && selectedLaps[0] === lap && (
-                        <span className="text-[10px] text-muted-foreground ml-auto whitespace-nowrap">(reference)</span>
+                        <span className="text-[10px] text-muted-foreground ml-auto whitespace-nowrap">(ref)</span>
                       )}
                     </div>
                   )
                 })}
-                {selectedLaps.length > 0 && (
-                  <Button variant="ghost" size="xs" className="w-full mt-2" onClick={clearSelectedLaps}>
-                    Clear selection
-                  </Button>
-                )}
               </div>
-            )}
-
-            {ibtProgress && (
-              <div className="mt-2 text-[10px] text-muted-foreground">
-                Parsing… {Math.floor((ibtProgress.processedRecords / ibtProgress.totalRecords) * 100)}%
-              </div>
-            )}
-            {ibtError && <div className="mt-2 text-[10px] text-red-400">{ibtError}</div>}
-          </div>
-
-          {/* Laps section */}
-          <div className="p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">Laps:</span>
-              <Button variant="ghost" size="icon-xs">
-                <Settings className="h-3 w-3" />
-              </Button>
+              {selectedLaps.length > 0 && (
+                <Button variant="ghost" size="xs" className="w-full mt-2" onClick={clearSelectedLaps}>
+                  Clear selection
+                </Button>
+              )}
             </div>
-            <div className="space-y-1">
-              {selectedLaps.length > 0 && ibtLapDataByLap ? (
-                selectedLaps.map((lap) => {
-                  const lapData = ibtLapDataByLap[lap]
+          )}
+
+          {/* Selected laps summary */}
+          {selectedLaps.length > 0 && (
+            <div className="border-b border-border p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">Selected Laps:</span>
+                <Button variant="ghost" size="icon-xs">
+                  <Settings className="h-3 w-3" />
+                </Button>
+              </div>
+              <div className="space-y-1">
+                {selectedLaps.map((lap) => {
+                  const lapData = ibtLapDataByLap?.[lap]
                   const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
                   const lapTime = lapData ? formatLapTime(lapData.lapTimeSec) : `Lap ${lap}`
                   const isRef = selectedLaps[0] === lap
                   const refLap = selectedLaps[0]
-                  const refData = ibtLapDataByLap[refLap]
+                  const refData = ibtLapDataByLap?.[refLap]
                   const delta = !isRef && refData && lapData
                     ? formatDeltaSeconds(lapData.lapTimeSec - refData.lapTimeSec)
                     : null
@@ -1830,24 +1863,20 @@ export function LapAnalysis() {
                       <div className="h-3 w-3 rounded-sm" style={{ backgroundColor: color }} />
                       <span className="font-medium">{lapTime}</span>
                       {delta && <span className="text-muted-foreground">({delta})</span>}
-                      {isRef && <span className="text-muted-foreground text-[10px]">(reference)</span>}
+                      {isRef && <span className="text-muted-foreground text-[10px]">(ref)</span>}
                     </div>
                   )
-                })
-              ) : (
-                <div className="text-xs text-muted-foreground px-2 py-1">
-                  No laps loaded. Load a .ibt file to begin analysis.
-                </div>
-              )}
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           <Separator />
 
           {/* Gaps section */}
           <div className="p-3">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">Gaps:</span>
+              <span className="text-xs font-medium text-muted-foreground">Sector Times:</span>
               <div className="flex gap-1">
                 <Button variant="ghost" size="icon-xs">
                   <ArrowUpDown className="h-3 w-3" />
@@ -1878,12 +1907,12 @@ export function LapAnalysis() {
               {selectedLaps.length > 0 && ibtLapDataByLap && sectorBoundaries.length > 0 ? (
                 <div className="space-y-2">
                   {/* Header */}
-                  <div className="grid gap-1 text-[10px] text-muted-foreground border-b border-border pb-1" style={{ gridTemplateColumns: `60px repeat(${selectedLaps.length}, 1fr)` }}>
-                    <div>Sector</div>
+                  <div className="grid gap-1 text-[10px] text-muted-foreground border-b border-border pb-1" style={{ gridTemplateColumns: `40px repeat(${selectedLaps.length}, 1fr)` }}>
+                    <div>Sec</div>
                     {selectedLaps.map((lap) => (
                       <div key={lap} className="flex items-center gap-1 justify-center">
                         <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: lapColors[lap] ?? LAP_COLOR_PALETTE[0] }} />
-                        <span>Lap {lap}</span>
+                        <span>L{lap}</span>
                       </div>
                     ))}
                   </div>
@@ -1891,7 +1920,7 @@ export function LapAnalysis() {
                   {sectorBoundaries.slice(1).map((sector) => {
                     const sectorNum = sector.sectorNum
                     return (
-                      <div key={sectorNum} className="grid gap-1 text-[10px]" style={{ gridTemplateColumns: `60px repeat(${selectedLaps.length}, 1fr)` }}>
+                      <div key={sectorNum} className="grid gap-1 text-[10px]" style={{ gridTemplateColumns: `40px repeat(${selectedLaps.length}, 1fr)` }}>
                         <div className="font-medium">S{sectorNum}</div>
                         {selectedLaps.map((lap) => {
                           const lapData = ibtLapDataByLap[lap]
@@ -1923,7 +1952,7 @@ export function LapAnalysis() {
                   })}
                 </div>
               ) : selectedLaps.length === 0 ? (
-                <div className="text-muted-foreground text-[10px]">Select laps to compare sector times</div>
+                <div className="text-muted-foreground text-[10px]">Select laps to compare</div>
               ) : sectorBoundaries.length === 0 ? (
                 <div className="text-muted-foreground text-[10px]">No sector data available</div>
               ) : null}
@@ -1932,35 +1961,59 @@ export function LapAnalysis() {
         </aside>
 
         {/* Center content */}
-        <div className="flex flex-1 flex-col">
-          <div className="flex flex-1">
-            {/* Track and main charts */}
-            <div className="flex flex-1 flex-col min-h-0">
-              {/* Track map and warning */}
-              <div className="relative flex-shrink-0 h-[400px] border-b border-border p-4 overflow-hidden">
-                <div className="absolute left-2 top-2 flex flex-col gap-1 z-10">
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Summary stats bar */}
+          {refLapStats && (
+            <div className="flex items-center gap-4 border-b border-border px-4 py-2 bg-muted/20">
+              <div className="flex items-center gap-1.5">
+                <Gauge className="h-4 w-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Lap:</span>
+                <span className="text-sm font-semibold">{refLapStats.lapTime}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Activity className="h-4 w-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Avg:</span>
+                <span className="text-sm font-medium">{refLapStats.avgSpeed.toFixed(0)} km/h</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Zap className="h-4 w-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Max:</span>
+                <span className="text-sm font-medium">{refLapStats.maxSpeed.toFixed(0)} km/h</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Throttle:</span>
+                <span className="text-sm font-medium">{refLapStats.avgThrottle.toFixed(0)}%</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Brake:</span>
+                <span className="text-sm font-medium">{refLapStats.avgBrake.toFixed(0)}%</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">RPM:</span>
+                <span className="text-sm font-medium">{refLapStats.maxRpm.toFixed(0)}</span>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                {(zoomXMin != null || zoomXMax != null) && (
+                  <Button variant="outline" size="xs" onClick={handleResetZoom}>
+                    Reset zoom
+                  </Button>
+                )}
+                <CursorDistanceDisplay />
+              </div>
+            </div>
+          )}
+
+          {/* Main content area - 2 column layout */}
+          <div className="flex flex-1 overflow-hidden">
+            {/* Left: Track map */}
+            <div className="flex flex-col w-80 border-r border-border">
+              <div className="relative flex-shrink-0 h-64 border-b border-border p-2">
+                <div className="absolute left-2 top-2 z-10">
                   <Button variant="outline" size="icon-xs" className="h-5 w-5">
                     <span className="text-[8px]">≡</span>
                   </Button>
-                  {(zoomXMin != null || zoomXMax != null) && (
-                    <Button 
-                      variant="outline" 
-                      size="xs" 
-                      onClick={handleResetZoom} 
-                      className="h-5 text-[9px] px-1.5"
-                      title="Reset chart zoom (or double-click any chart)"
-                    >
-                      <RefreshCw className="h-3 w-3 mr-1" />
-                      Reset
-                    </Button>
-                  )}
                 </div>
-                <div className="absolute right-4 top-4 z-10">
-                  <div className="flex items-center gap-2 rounded bg-yellow-500/20 px-2 py-1 text-yellow-500">
-                    <AlertTriangle className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="w-full h-full overflow-hidden">
+                <div className="w-full h-full">
                   <TrackMap 
                     lapDataByLap={ibtLapDataByLap} 
                     selectedLaps={selectedLaps} 
@@ -1969,203 +2022,245 @@ export function LapAnalysis() {
                 </div>
               </div>
 
-              {/* Line distance chart */}
-              <div className="h-36 border-b border-border p-2 overflow-hidden">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] text-muted-foreground">Line distance</span>
-                  <div className="flex items-center gap-2">
-                    {(zoomXMin != null || zoomXMax != null) && (
-                      <Button variant="ghost" size="xs" onClick={handleResetZoom} className="h-5 text-[10px]">
-                        Reset zoom
-                      </Button>
-                    )}
-                    <CursorDistanceDisplay />
-                  </div>
+              {/* Legend panel */}
+              <div className="flex-1 p-3 overflow-y-auto">
+                <div className="text-xs font-medium text-muted-foreground mb-2">Lap Comparison</div>
+                <div className="space-y-2">
+                  {selectedLaps.map((lap) => {
+                    const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
+                    const lapData = ibtLapDataByLap?.[lap]
+                    const lapTime = lapData ? formatLapTime(lapData.lapTimeSec) : `Lap ${lap}`
+                    const isRef = selectedLaps[0] === lap
+                    return (
+                      <div key={lap} className="flex items-center gap-2 text-xs">
+                        <div className="h-3 w-3 rounded-sm" style={{ backgroundColor: color }} />
+                        <span className="font-medium">Lap {lap}</span>
+                        <span className="text-muted-foreground">{lapTime}</span>
+                        {isRef && <span className="text-[10px] text-muted-foreground">(reference)</span>}
+                      </div>
+                    )
+                  })}
                 </div>
-                <div className="h-[calc(100%-16px)] min-h-0 min-w-0">
-                  <SyncedChart
-                    data={telemetryData}
-                    series={lineDistSeries}
-                    yDomain={[-15, 15]}
-                    showYAxisRight={true}
-                    margin={{ top: 5, right: 30, left: 30, bottom: 5 }}
-                    unit=" m"
-                    xMin={zoomXMin}
-                    xMax={zoomXMax}
-                    onZoomChange={handleZoomChange}
-                    originalXMax={originalXMax ?? undefined}
-                  />
-                </div>
-              </div>
 
-              {/* Time delta chart */}
-              <div className="h-36 border-b border-border p-2 overflow-hidden">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] text-muted-foreground">Time delta</span>
-                  <CursorDistanceDisplay />
-                </div>
-                <div className="h-[calc(100%-16px)] min-h-0 min-w-0">
-                  <SyncedChart
-                    data={telemetryData}
-                    series={timeDeltaSeries}
-                    showYAxisRight={true}
-                    margin={{ top: 5, right: 30, left: 30, bottom: 5 }}
-                    unit=" sec"
-                    xMin={zoomXMin}
-                    xMax={zoomXMax}
-                    onZoomChange={handleZoomChange}
-                    originalXMax={originalXMax ?? undefined}
-                  />
-                </div>
-              </div>
-
-              {/* Legend */}
-              <div className="flex items-center gap-6 border-b border-border p-3">
-                {selectedLaps.map((lap) => {
-                  const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
-                  const lapData = ibtLapDataByLap?.[lap]
-                  const lapTime = lapData ? formatLapTime(lapData.lapTimeSec) : `Lap ${lap}`
-                  const isRef = selectedLaps[0] === lap
-                  return (
-                    <div key={lap} className="flex items-center gap-2 text-xs">
-                      <div className="h-3 w-3 rounded-sm" style={{ backgroundColor: color }} />
-                      <span>{lapTime}</span>
-                      {isRef && <span className="text-muted-foreground">(reference)</span>}
+                {/* Best sectors */}
+                {ibtLapDataByLap && selectedLaps.length > 0 && sectorBoundaries.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-xs font-medium text-muted-foreground mb-2">Best Sectors</div>
+                    <div className="space-y-1">
+                      {sectorBoundaries.slice(1).map((sector) => {
+                        const sectorNum = sector.sectorNum
+                        let bestLap = selectedLaps[0]
+                        let bestTime = Infinity
+                        for (const lap of selectedLaps) {
+                          const lapData = ibtLapDataByLap[lap]
+                          const sectorTime = lapData?.sectorTimes.find((st) => st.sectorNum === sectorNum)
+                          if (sectorTime && sectorTime.timeSec < bestTime) {
+                            bestTime = sectorTime.timeSec
+                            bestLap = lap
+                          }
+                        }
+                        const color = lapColors[bestLap] ?? LAP_COLOR_PALETTE[0]
+                        return (
+                          <div key={sectorNum} className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground w-6">S{sectorNum}</span>
+                            <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: color }} />
+                            <span className="font-medium">Lap {bestLap}</span>
+                            <span className="text-muted-foreground">{formatSectorTime(bestTime)}</span>
+                          </div>
+                        )
+                      })}
                     </div>
-                  )
-                })}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Right telemetry charts */}
-            <div className="w-96 border-l border-border flex flex-col overflow-hidden">
-              {telemetryData.length > 0 && selectedLaps.length > 0 && ibtLapDataByLap ? (
-                <>
-                  {/* Speed */}
-                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
-                    <SyncedChart
-                      data={telemetryData}
-                      series={speedSeries}
-                      yDomain={[0, 250]}
-                      unit=" km/h"
-                      formatValue={formatDecimal1}
-                      xMin={zoomXMin}
-                      xMax={zoomXMax}
-                      onZoomChange={handleZoomChange}
-                      originalXMax={originalXMax ?? undefined}
-                    />
-                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Speed</div>
+            {/* Right: Charts area */}
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <div className="flex flex-1">
+                {/* Main comparison charts - top row */}
+                <div className="flex-1 flex flex-col min-w-0">
+                  {/* Speed chart - largest */}
+                  <div className="flex-1 border-b border-border p-2 overflow-hidden min-h-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-muted-foreground font-medium">Speed</span>
+                    </div>
+                    <div className="h-[calc(100%-20px)] min-h-0">
+                      <SyncedChart
+                        data={telemetryData}
+                        series={speedSeries}
+                        yDomain={[0, 250]}
+                        unit=" km/h"
+                        formatValue={formatDecimal1}
+                        xMin={zoomXMin}
+                        xMax={zoomXMax}
+                        onZoomChange={handleZoomChange}
+                        originalXMax={originalXMax ?? undefined}
+                      />
+                    </div>
                   </div>
 
-                  {/* Throttle */}
-                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
-                <SyncedChart
-                  data={telemetryData}
-                  series={throttleSeries}
-                  yDomain={[0, 100]}
-                  unit="%"
-                  formatValue={formatDecimal0}
-                  xMin={zoomXMin}
-                  xMax={zoomXMax}
-                  onZoomChange={handleZoomChange}
-                  originalXMax={originalXMax ?? undefined}
-                />
-                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Throttle</div>
+                  {/* Throttle & Brake row */}
+                  <div className="h-40 border-b border-border flex">
+                    <div className="flex-1 border-r border-border p-2 overflow-hidden">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-muted-foreground font-medium">Throttle</span>
+                      </div>
+                      <div className="h-[calc(100%-20px)]">
+                        <SyncedChart
+                          data={telemetryData}
+                          series={throttleSeries}
+                          yDomain={[0, 100]}
+                          unit="%"
+                          formatValue={formatDecimal0}
+                          xMin={zoomXMin}
+                          xMax={zoomXMax}
+                          onZoomChange={handleZoomChange}
+                          originalXMax={originalXMax ?? undefined}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex-1 p-2 overflow-hidden">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-muted-foreground font-medium">Brake</span>
+                      </div>
+                      <div className="h-[calc(100%-20px)]">
+                        <SyncedChart
+                          data={telemetryData}
+                          series={brakeSeries}
+                          yDomain={[0, 100]}
+                          unit="%"
+                          formatValue={formatDecimal0}
+                          xMin={zoomXMin}
+                          xMax={zoomXMax}
+                          onZoomChange={handleZoomChange}
+                          originalXMax={originalXMax ?? undefined}
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Brake */}
-                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
-                    <SyncedChart
-                      data={telemetryData}
-                      series={brakeSeries}
-                      yDomain={[0, 100]}
-                      unit="%"
-                      formatValue={formatDecimal0}
-                      xMin={zoomXMin}
-                      xMax={zoomXMax}
-                      onZoomChange={handleZoomChange}
-                      originalXMax={originalXMax ?? undefined}
-                    />
-                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Brake</div>
+                  {/* Time delta & Line distance row */}
+                  <div className="h-40 flex">
+                    <div className="flex-1 border-r border-border p-2 overflow-hidden">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-muted-foreground font-medium">Time Delta</span>
+                      </div>
+                      <div className="h-[calc(100%-20px)]">
+                        <SyncedChart
+                          data={telemetryData}
+                          series={timeDeltaSeries}
+                          showYAxisRight={true}
+                          unit=" sec"
+                          xMin={zoomXMin}
+                          xMax={zoomXMax}
+                          onZoomChange={handleZoomChange}
+                          originalXMax={originalXMax ?? undefined}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex-1 p-2 overflow-hidden">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-muted-foreground font-medium">Line Distance</span>
+                      </div>
+                      <div className="h-[calc(100%-20px)]">
+                        <SyncedChart
+                          data={telemetryData}
+                          series={lineDistSeries}
+                          yDomain={[-15, 15]}
+                          showYAxisRight={true}
+                          unit=" m"
+                          xMin={zoomXMin}
+                          xMax={zoomXMax}
+                          onZoomChange={handleZoomChange}
+                          originalXMax={originalXMax ?? undefined}
+                        />
+                      </div>
+                    </div>
                   </div>
+                </div>
 
-                  {/* Gear */}
-                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
-                    <SyncedChart
-                      data={telemetryData}
-                      series={gearSeries}
-                      yDomain={[0, 7]}
-                      chartType="stepAfter"
-                      formatValue={formatDecimal0}
-                      xMin={zoomXMin}
-                      xMax={zoomXMax}
-                      onZoomChange={handleZoomChange}
-                      originalXMax={originalXMax ?? undefined}
-                    />
-                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Gear</div>
+                {/* Right column: Gear, RPM, Steering */}
+                <div className="w-64 border-l border-border flex flex-col">
+                  <div className="flex-1 border-b border-border p-2 overflow-hidden min-h-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-muted-foreground font-medium">Gear</span>
+                    </div>
+                    <div className="h-[calc(100%-20px)]">
+                      <SyncedChart
+                        data={telemetryData}
+                        series={gearSeries}
+                        yDomain={[0, 7]}
+                        chartType="stepAfter"
+                        formatValue={formatDecimal0}
+                        xMin={zoomXMin}
+                        xMax={zoomXMax}
+                        onZoomChange={handleZoomChange}
+                        originalXMax={originalXMax ?? undefined}
+                      />
+                    </div>
                   </div>
+                  <div className="flex-1 border-b border-border p-2 overflow-hidden min-h-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-muted-foreground font-medium">RPM</span>
+                    </div>
+                    <div className="h-[calc(100%-20px)]">
+                      <SyncedChart
+                        data={telemetryData}
+                        series={rpmSeries}
+                        yDomain={[2000, 8000]}
+                        unit=" rpm"
+                        formatValue={formatDecimal0}
+                        xMin={zoomXMin}
+                        xMax={zoomXMax}
+                        onZoomChange={handleZoomChange}
+                        originalXMax={originalXMax ?? undefined}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex-1 p-2 overflow-hidden min-h-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-muted-foreground font-medium">Steering</span>
+                    </div>
+                    <div className="h-[calc(100%-20px)]">
+                      <SyncedChart
+                        data={telemetryData}
+                        series={steeringSeries}
+                        yDomain={[-200, 200]}
+                        unit="°"
+                        formatValue={formatDecimal1}
+                        xMin={zoomXMin}
+                        xMax={zoomXMax}
+                        onZoomChange={handleZoomChange}
+                        originalXMax={originalXMax ?? undefined}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-                  {/* RPM */}
-                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
-                    <SyncedChart
-                      data={telemetryData}
-                      series={rpmSeries}
-                      yDomain={[2000, 8000]}
-                      unit=" rpm"
-                      formatValue={formatDecimal0}
-                      xMin={zoomXMin}
-                      xMax={zoomXMax}
-                      onZoomChange={handleZoomChange}
-                      originalXMax={originalXMax ?? undefined}
-                    />
-                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">RPM</div>
-                  </div>
-
-                  {/* Steering wheel angle */}
-                  <div className="relative flex-1 border-b border-border overflow-hidden min-h-0 min-w-0">
-                    <SyncedChart
-                      data={telemetryData}
-                      series={steeringSeries}
-                      yDomain={[-200, 200]}
-                      unit="°"
-                      formatValue={formatDecimal1}
-                      xMin={zoomXMin}
-                      xMax={zoomXMax}
-                      onZoomChange={handleZoomChange}
-                      originalXMax={originalXMax ?? undefined}
-                    />
-                    <div className="absolute left-2 top-2 text-[10px] text-muted-foreground whitespace-nowrap pointer-events-none">Steering wheel angle</div>
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                  Load a .ibt file to view telemetry charts
+              {/* Sector indicators */}
+              {sectorBoundaries.length > 1 && (
+                <div className="flex h-8 border-t border-border flex-shrink-0">
+                  {sectorBoundaries.slice(1).map((sector, index) => {
+                    const sectorNum = sector.sectorNum
+                    const isEven = index % 2 === 0
+                    const isLast = index === sectorBoundaries.length - 2
+                    return (
+                      <div
+                        key={sectorNum}
+                        className={`flex flex-1 items-center justify-center ${
+                          !isLast ? "border-r border-border" : ""
+                        } ${isEven ? "bg-background" : "bg-muted/30"}`}
+                      >
+                        <span className="text-xs font-medium">S{sectorNum}</span>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
           </div>
-
-          {/* Sector indicators */}
-          {sectorBoundaries.length > 1 && (
-            <div className="flex h-8 border-t border-border">
-              {sectorBoundaries.slice(1).map((sector, index) => {
-                const sectorNum = sector.sectorNum
-                // Alternate background colors for visual distinction
-                const isEven = index % 2 === 0
-                const isLast = index === sectorBoundaries.length - 2
-                return (
-                  <div
-                    key={sectorNum}
-                    className={`flex flex-1 items-center justify-center ${
-                      !isLast ? "border-r border-border" : ""
-                    } ${isEven ? "bg-background" : "bg-muted/30"}`}
-                  >
-                    <span className="text-xs font-medium">S{sectorNum}</span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
         </div>
       </div>
 

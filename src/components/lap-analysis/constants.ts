@@ -11,3 +11,4 @@ export const LAP_COLOR_PALETTE = [
   "#a855f7", // violet
 ] as const
 
+
