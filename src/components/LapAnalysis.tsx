@@ -705,7 +705,7 @@ export function LapAnalysis() {
                       </div>
 
                       {/* Right column: Gear, RPM, Steering */}
-                      <div className="w-56 border-l border-border flex flex-col">
+                      <div className="w-80 border-l border-border flex flex-col">
                         <div className="flex-1 min-h-[80px] border-b border-border px-2 pt-1 pb-1 overflow-hidden">
                           <div className="flex items-center justify-between mb-0.5">
                             <span className="text-xs font-medium">Gear</span>
