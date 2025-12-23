@@ -1,12 +1,12 @@
-import { useState, useCallback, useMemo, useRef, Suspense, lazy } from "react"
+import { useState, useCallback, useMemo, useRef, Suspense, lazy, useEffect } from "react"
 import {
   Upload,
   FileText,
   Settings,
   TrendingUp,
-  BarChart3,
   Map,
   AlertCircle,
+  ArrowLeft,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -68,7 +68,12 @@ const DEFAULT_CHART_ORDER: ChartId[] = [
   CHART_IDS.TIRE_WEAR,
 ]
 
-export function LapAnalysis() {
+interface LapAnalysisProps {
+  initialFile?: File | null
+  onBackToStart?: () => void
+}
+
+export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {}) {
   // Create cursor store once - bypasses React state for performance
   const cursorStoreRef = useRef<ReturnType<typeof createCursorStore> | null>(null)
   if (!cursorStoreRef.current) {
@@ -111,8 +116,8 @@ export function LapAnalysis() {
   }, [])
 
   // Drag and drop handlers
-  const handleDragStart = useCallback((id: ChartId) => {
-    setDraggingChartId(id)
+  const handleDragStart = useCallback((id: string) => {
+    setDraggingChartId(id as ChartId)
   }, [])
 
   const handleDragEnd = useCallback(() => {
@@ -120,8 +125,8 @@ export function LapAnalysis() {
     setDragOverChartId(null)
   }, [])
 
-  const handleDragOver = useCallback((id: ChartId) => {
-    setDragOverChartId(id)
+  const handleDragOver = useCallback((id: string) => {
+    setDragOverChartId(id as ChartId)
   }, [])
 
   const handleDrop = useCallback((draggedId: string, targetId: string) => {
@@ -455,6 +460,12 @@ export function LapAnalysis() {
       setIbtError(msg)
     }
   }, [loadIbt])
+
+  useEffect(() => {
+    if (initialFile) {
+      loadIbt(initialFile, initialFile.name)
+    }
+  }, [initialFile, loadIbt])
 
   // Compute original X max (full track distance)
   const originalXMax = useMemo(() => {
@@ -861,21 +872,19 @@ export function LapAnalysis() {
             <span className="text-sm font-semibold">Ctrl Alt Elite</span>
           </div>
           <nav className="flex items-center gap-0.5">
-            {[
-              { icon: BarChart3, label: "Overview", active: false },
-              { icon: TrendingUp, label: "Analyze", active: true },
-              { icon: Map, label: "Track", active: false },
-            ].map(({ icon: Icon, label, active }) => (
-              <Button
-                key={label}
-                variant={active ? "secondary" : "ghost"}
-                size="sm"
-                className="h-8 gap-1.5"
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {label}
-              </Button>
-            ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={onBackToStart}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back to Overview
+            </Button>
+            <Button variant="secondary" size="sm" className="h-8 gap-1.5">
+              <TrendingUp className="h-3.5 w-3.5" />
+              Analyze
+            </Button>
           </nav>
         </div>
         <div className="flex items-center gap-2">
@@ -923,6 +932,7 @@ export function LapAnalysis() {
           <TelemetrySourceInput
             onFileSelect={(file) => loadIbt(file, file.name)}
             onLoadSample={loadSample}
+            onBackToStart={onBackToStart}
             loading={ibtLoading}
             sourceLabel={ibtSourceLabel}
             progress={ibtProgress}

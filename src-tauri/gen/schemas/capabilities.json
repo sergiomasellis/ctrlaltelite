@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"Main capability for the application","local":true,"windows":["main"],"permissions":["fs:allow-read-dir","fs:allow-read-file","fs:scope-document","fs:scope-document-recursive","core:path:default"]}}

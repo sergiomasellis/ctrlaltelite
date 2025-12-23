@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "convert-ibt": "bun scripts/convert-ibt.mjs"
+    "convert-ibt": "bun scripts/convert-ibt.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",
@@ -16,6 +19,8 @@
     "@fontsource-variable/roboto": "^5.2.9",
     "@fontsource/orbitron": "^5.2.8",
     "@tailwindcss/vite": "^4.1.17",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-fs": "^2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",
@@ -30,6 +35,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@tauri-apps/cli": "^2",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",

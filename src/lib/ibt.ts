@@ -309,4 +309,50 @@ export async function readIbtSamples(
   return rows
 }
 
+export interface IbtSessionMetadata {
+  trackName?: string
+  carName?: string
+  sessionDate?: string
+  sessionTime?: string
+  sessionType?: string
+  trackConfig?: string
+  lapCount?: number
+  recordCount?: number
+}
+
+export async function readIbtMetadata(blob: Blob): Promise<IbtSessionMetadata> {
+  const header = await readIbtHeader(blob)
+  const yaml = await readIbtSessionInfoYaml(blob, header)
+  
+  const metadata: IbtSessionMetadata = {
+    lapCount: header.diskSubHeader?.lapCount,
+    recordCount: header.diskSubHeader?.recordCount,
+  }
+
+  const trackMatch = yaml.match(/TrackName:\s*"([^"]+)"/)
+  if (trackMatch) metadata.trackName = trackMatch[1]
+
+  const trackConfigMatch = yaml.match(/TrackConfig:\s*"([^"]+)"/)
+  if (trackConfigMatch) metadata.trackConfig = trackConfigMatch[1]
+
+  const carMatch = yaml.match(/CarSetup:\s*\n\s*Car:\s*"([^"]+)"/)
+  if (carMatch) {
+    metadata.carName = carMatch[1]
+  } else {
+    const carMatch2 = yaml.match(/CarName:\s*"([^"]+)"/)
+    if (carMatch2) metadata.carName = carMatch2[1]
+  }
+
+  const sessionTypeMatch = yaml.match(/SessionType:\s*"([^"]+)"/)
+  if (sessionTypeMatch) metadata.sessionType = sessionTypeMatch[1]
+
+  if (header.diskSubHeader) {
+    const date = new Date(header.diskSubHeader.sessionStartDate * 1000)
+    metadata.sessionDate = date.toLocaleDateString()
+    metadata.sessionTime = date.toLocaleTimeString()
+  }
+
+  return metadata
+}
+
 

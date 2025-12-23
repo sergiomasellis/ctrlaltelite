@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, ReactNode } from "react"
+import { useRef, useState, useCallback, type ReactNode } from "react"
 import { GripVertical } from "lucide-react"
 
 interface DraggableChartProps {
@@ -25,7 +25,6 @@ export function DraggableChart({
   onDragEnd,
   onDragOver,
   onDrop,
-  isDragging = false,
   dragOverId,
   className = "",
   style,
