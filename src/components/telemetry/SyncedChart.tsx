@@ -364,7 +364,7 @@ const SyncedChartInner = memo(function SyncedChartInner({
 
   return (
     <div
-      className="relative w-full h-full min-w-0 min-h-0"
+      className="relative w-full h-full min-w-0 min-h-0 overflow-hidden"
       ref={chartRef}
       onMouseMove={handleContainerMouseMove}
       onMouseLeave={handleContainerMouseLeave}

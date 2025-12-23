@@ -683,7 +683,7 @@ export function LapAnalysis() {
         )}
       </div>
 
-      {/* Main content */}
+{/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left sidebar - data source and lap selection */}
         <aside className="flex w-56 flex-col border-r border-border overflow-y-auto bg-muted/10">
@@ -737,46 +737,46 @@ export function LapAnalysis() {
           <div className="flex flex-1 overflow-hidden">
             {/* Left: Track map and legend */}
             <div className="flex flex-col w-64 border-r border-border">
-              {/* Track map */}
-              <div className="relative flex-shrink-0 h-48 border-b border-border p-2">
-                <div className="absolute left-2 top-2 z-10">
-                  <Button variant="secondary" size="icon-xs" className="h-5 w-5">
-                    <Map className="h-3 w-3" />
-                  </Button>
-                </div>
-                <div className="w-full h-full">
-                  {ibtLapDataByLap ? (
-                    <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">Loading map...</div>}>
-                      <TrackMap
-                        lapDataByLap={ibtLapDataByLap}
-                        selectedLaps={selectedLaps}
-                        lapColors={lapColors}
-                        zoomXMin={zoomXMin}
-                        zoomXMax={zoomXMax}
-                      />
-                    </Suspense>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-muted/30 rounded-md">
-                      <div className="text-center">
-                        <Map className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                        <p className="text-xs text-muted-foreground">Track map</p>
-                        <p className="text-[10px] text-muted-foreground/70">Load data to view</p>
+                {/* Track map */}
+                <div className="relative flex-shrink-0 h-48 border-b border-border p-2">
+                  <div className="absolute left-2 top-2 z-10">
+                    <Button variant="secondary" size="icon-xs" className="h-5 w-5">
+                      <Map className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <div className="w-full h-full">
+                    {ibtLapDataByLap ? (
+                      <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">Loading map...</div>}>
+                        <TrackMap
+                          lapDataByLap={ibtLapDataByLap}
+                          selectedLaps={selectedLaps}
+                          lapColors={lapColors}
+                          zoomXMin={zoomXMin}
+                          zoomXMax={zoomXMax}
+                        />
+                      </Suspense>
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-muted/30 rounded-md">
+                        <div className="text-center">
+                          <Map className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                          <p className="text-xs text-muted-foreground">Track map</p>
+                          <p className="text-[10px] text-muted-foreground/70">Load data to view</p>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              {/* Legend */}
-              {ibtLapDataByLap && (
-                <LapComparisonLegend
-                  selectedLaps={selectedLaps}
-                  lapDataByLap={ibtLapDataByLap}
-                  lapColors={lapColors}
-                  sectorBoundaries={sectorBoundaries}
-                />
-              )}
-            </div>
+                {/* Legend */}
+                {ibtLapDataByLap && (
+                  <LapComparisonLegend
+                    selectedLaps={selectedLaps}
+                    lapDataByLap={ibtLapDataByLap}
+                    lapColors={lapColors}
+                    sectorBoundaries={sectorBoundaries}
+                  />
+                )}
+              </div>
 
             {/* Right: Charts area */}
             <div className="flex flex-1 flex-col overflow-hidden">

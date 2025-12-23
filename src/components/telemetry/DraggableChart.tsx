@@ -92,13 +92,13 @@ export function DraggableChart({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`relative bg-background transition-all group border ${className} ${
+      className={`relative bg-background transition-all group border overflow-hidden flex flex-col ${className} ${
         isDraggingThis ? "opacity-50" : ""
       } ${isCurrentlyDraggedOver ? "ring-2 ring-primary ring-offset-1" : ""}`}
       style={style}
     >
       {/* Header with drag handle */}
-      <div className="flex items-center justify-between mb-0.5 px-2 pt-1 relative">
+      <div className="flex items-center justify-between mb-0.5 px-2 pt-1 relative flex-shrink-0">
         <div className="flex items-center gap-1">
           <div
             draggable
@@ -117,7 +117,7 @@ export function DraggableChart({
       </div>
 
       {/* Chart content */}
-      <div className="h-[calc(100%-16px)] min-h-0">{children}</div>
+      <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
     </div>
   )
 }
