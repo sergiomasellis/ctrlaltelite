@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react"
 import { LapAnalysis } from "@/components/LapAnalysis"
 import { Overview } from "@/components/Overview"
+import { TitleBar } from "@/components/TitleBar"
 
 export function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -28,32 +29,42 @@ export function App() {
 
   if (!selectedFile) {
     return (
-      <div className="dark">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".ibt"
-          className="hidden"
-          onChange={handleFileInputChange}
-        />
-        <Overview onFileSelect={handleFileSelect} onFileUpload={handleFileUpload} />
+      <div className="dark h-screen">
+        <div className="flex h-screen flex-col">
+          <TitleBar />
+          <div className="min-h-0 flex-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".ibt"
+              className="hidden"
+              onChange={handleFileInputChange}
+            />
+            <Overview onFileSelect={handleFileSelect} onFileUpload={handleFileUpload} />
+          </div>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="dark">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".ibt"
-        className="hidden"
-        onChange={handleFileInputChange}
-      />
-      <LapAnalysis
-        initialFile={selectedFile}
-        onBackToStart={handleBackToOverview}
-      />
+    <div className="dark h-screen">
+      <div className="flex h-screen flex-col">
+        <TitleBar />
+        <div className="min-h-0 flex-1">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".ibt"
+            className="hidden"
+            onChange={handleFileInputChange}
+          />
+          <LapAnalysis
+            initialFile={selectedFile}
+            onBackToStart={handleBackToOverview}
+          />
+        </div>
+      </div>
     </div>
   )
 }

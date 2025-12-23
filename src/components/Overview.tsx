@@ -87,9 +87,9 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
   const scanLabel = lastScanAt ? lastScanAt.toLocaleString() : "Not scanned yet"
 
   return (
-    <div className="relative min-h-screen bg-background text-foreground">
+    <div className="relative h-full bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(230,57,70,0.18),_transparent_55%)]" />
-      <div className="relative flex min-h-screen flex-col">
+      <div className="relative flex h-full flex-col">
         <header className="border-b border-border/60 bg-background/80 backdrop-blur">
           <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4">
             <div className="flex items-center gap-4">

@@ -861,7 +861,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
 
   return (
     <CursorStoreContext.Provider value={cursorStore}>
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div className="flex h-full flex-col bg-background text-foreground">
       {/* Compact header with integrated navigation */}
       <header className="flex h-12 items-center justify-between border-b border-border px-4 bg-muted/30">
         <div className="flex items-center gap-4">
