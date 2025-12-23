@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from "react"
+import { useState, useCallback, useMemo, useRef, memo, useEffect, createContext, useContext } from "react"
 import {
   ChevronLeft,
   ChevronRight,
@@ -28,24 +28,94 @@ import {
   XAxis,
   YAxis,
   ResponsiveContainer,
-  ReferenceLine,
   ReferenceArea,
   Tooltip,
+  CartesianGrid,
 } from "recharts"
 
+// ============================================
+// CURSOR STORE - Bypasses React state for performance
+// Uses direct DOM manipulation like canvas-based apps
+// ============================================
+
+type CursorListener = (distance: number | null) => void
+
+interface CursorStore {
+  distance: number | null
+  listeners: Set<CursorListener>
+  setDistance: (distance: number | null) => void
+  subscribe: (listener: CursorListener) => () => void
+}
+
+function createCursorStore(): CursorStore {
+  const store: CursorStore = {
+    distance: null,
+    listeners: new Set(),
+    setDistance: (distance: number | null) => {
+      store.distance = distance
+      // Notify all listeners synchronously (like canvas redraw)
+      store.listeners.forEach(listener => listener(distance))
+    },
+    subscribe: (listener: CursorListener) => {
+      store.listeners.add(listener)
+      return () => store.listeners.delete(listener)
+    }
+  }
+  return store
+}
+
+const CursorStoreContext = createContext<CursorStore | null>(null)
+
+// Hook to subscribe to cursor updates with direct DOM manipulation
+function useCursorSubscription(
+  callback: CursorListener,
+  deps: React.DependencyList = []
+) {
+  const store = useContext(CursorStoreContext)
+  
+  useEffect(() => {
+    if (!store) return
+    // Subscribe and return unsubscribe function
+    return store.subscribe(callback)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, ...deps])
+}
+
+// Hook to get cursor update function (doesn't cause re-renders)
+function useCursorUpdate() {
+  const store = useContext(CursorStoreContext)
+  return useCallback((distance: number | null) => {
+    store?.setDistance(distance)
+  }, [store])
+}
+
+// Cursor distance display - subscribes to cursor updates
+function CursorDistanceDisplay() {
+  const [distance, setDistance] = useState<number | null>(null)
+  
+  useCursorSubscription((d) => setDistance(d), [])
+  
+  if (distance === null) return null
+  
+  return (
+    <span className="text-[10px] text-muted-foreground">{distance.toFixed(3)} km</span>
+  )
+}
+
+// ============================================
 
 // Track SVG path - realistic racing circuit
 function TrackMap({
   lapDataByLap,
   selectedLaps,
   lapColors,
-  cursorDistance,
 }: {
   lapDataByLap: Record<number, IbtLapData> | null
   selectedLaps: number[]
   lapColors: Record<number, string>
-  cursorDistance: number | null
 }) {
+  // Ref for the cursor group element - updated via subscription
+  const cursorGroupRef = useRef<SVGGElement>(null)
   // Calculate bounds from all selected laps
   const bounds = useMemo(() => {
     if (!lapDataByLap || selectedLaps.length === 0) return null
@@ -74,6 +144,43 @@ function TrackMap({
     return { minLat, maxLat, minLon, maxLon }
   }, [lapDataByLap, selectedLaps])
 
+  // Calculate SVG dimensions and aspect ratio based on GPS bounds
+  const svgDimensions = useMemo(() => {
+    if (!bounds) return { width: 400, height: 320, padding: 20 }
+    
+    const latRange = bounds.maxLat - bounds.minLat || 0.001
+    const lonRange = bounds.maxLon - bounds.minLon || 0.001
+    
+    // Account for longitude compression at higher latitudes
+    // Average latitude for the track
+    const avgLat = (bounds.minLat + bounds.maxLat) / 2
+    const lonScale = Math.cos((avgLat * Math.PI) / 180)
+    
+    // Calculate the actual aspect ratio of the GPS data
+    const gpsAspectRatio = (lonRange * lonScale) / latRange
+    
+    // Base dimensions (can be adjusted)
+    const baseWidth = 800
+    const baseHeight = 600
+    const padding = 20
+    
+    // Calculate dimensions that preserve the GPS aspect ratio
+    let width: number
+    let height: number
+    
+    if (gpsAspectRatio > baseWidth / baseHeight) {
+      // GPS data is wider - fit to width
+      width = baseWidth
+      height = baseWidth / gpsAspectRatio
+    } else {
+      // GPS data is taller - fit to height
+      height = baseHeight
+      width = baseHeight * gpsAspectRatio
+    }
+    
+    return { width, height, padding }
+  }, [bounds])
+
   // Convert GPS coordinates to SVG coordinates
   const gpsToSvg = useCallback((lat: number, lon: number): { x: number; y: number } | null => {
     if (!bounds) return null
@@ -81,15 +188,15 @@ function TrackMap({
     const latRange = bounds.maxLat - bounds.minLat || 0.001
     const lonRange = bounds.maxLon - bounds.minLon || 0.001
     
-    const padding = 20
-    const width = 400 - padding * 2
-    const height = 320 - padding * 2
+    const { width, height, padding } = svgDimensions
+    const plotWidth = width - padding * 2
+    const plotHeight = height - padding * 2
     
-    const x = padding + ((lon - bounds.minLon) / lonRange) * width
-    const y = padding + ((bounds.maxLat - lat) / latRange) * height // Invert Y axis
+    const x = padding + ((lon - bounds.minLon) / lonRange) * plotWidth
+    const y = padding + ((bounds.maxLat - lat) / latRange) * plotHeight // Invert Y axis
     
     return { x, y }
-  }, [bounds])
+  }, [bounds, svgDimensions])
 
   // Convert GPS coordinates to SVG path
   const gpsToSvgPath = useCallback((points: IbtLapPoint[]): string => {
@@ -126,32 +233,86 @@ function TrackMap({
     }).filter((p): p is { lap: number; path: string; color: string; lapData: IbtLapData } => p != null && p.path !== "")
   }, [lapDataByLap, selectedLaps, lapColors, gpsToSvgPath])
 
-  // Calculate cursor positions for each lap
-  const cursorPositions = useMemo(() => {
-    if (cursorDistance == null || !lapDataByLap || selectedLaps.length === 0 || !bounds) return []
+  // Build array of valid GPS points for interpolation (memoized separately for performance)
+  const validGpsPoints = useMemo(() => {
+    if (!lapDataByLap || selectedLaps.length === 0) return []
     
-    return selectedLaps.map((lap) => {
-      const lapData = lapDataByLap[lap]
-      if (!lapData) return null
-      
-      // Check if cursor distance is within lap bounds
-      const minDist = lapData.byDist[0]?.distanceKm ?? 0
-      const maxDist = lapData.byDist[lapData.byDist.length - 1]?.distanceKm ?? 0
-      if (cursorDistance < minDist || cursorDistance > maxDist) return null
-      
-      // Interpolate GPS coordinates at cursor distance
-      const lat = interpolateValue(lapData.byDist, cursorDistance, "distanceKm", (p) => p.lat)
-      const lon = interpolateValue(lapData.byDist, cursorDistance, "distanceKm", (p) => p.lon)
-      
-      if (lat == null || lon == null) return null
-      
-      const svgPos = gpsToSvg(lat, lon)
-      if (!svgPos) return null
-      
-      const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
-      return { lap, x: svgPos.x, y: svgPos.y, color }
-    }).filter((p): p is { lap: number; x: number; y: number; color: string } => p != null)
-  }, [cursorDistance, lapDataByLap, selectedLaps, lapColors, bounds, gpsToSvg])
+    const refLap = selectedLaps[0]
+    if (refLap == null) return []
+    
+    const lapData = lapDataByLap[refLap]
+    if (!lapData) return []
+    
+    // Filter to only points with valid GPS coordinates, sorted by distance
+    return lapData.byDist
+      .filter((p): p is IbtLapPoint & { lat: number; lon: number } => 
+        p.lat != null && p.lon != null && Number.isFinite(p.lat) && Number.isFinite(p.lon)
+      )
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+  }, [lapDataByLap, selectedLaps])
+
+  // Get total lap distance for percentage calculation
+  const totalLapDistance = useMemo(() => {
+    if (!lapDataByLap || selectedLaps.length === 0) return 0
+    const refLap = selectedLaps[0]
+    if (refLap == null) return 0
+    const lapData = lapDataByLap[refLap]
+    return lapData?.distanceKm ?? 0
+  }, [lapDataByLap, selectedLaps])
+
+  // Get reference lap color
+  const refLapColor = useMemo(() => {
+    const refLap = selectedLaps[0]
+    if (refLap == null) return LAP_COLOR_PALETTE[0]
+    return lapColors[refLap] ?? LAP_COLOR_PALETTE[0]
+  }, [selectedLaps, lapColors])
+
+  // Subscribe to cursor updates and directly manipulate SVG elements
+  useCursorSubscription((cursorDistance) => {
+    const g = cursorGroupRef.current
+    if (!g) return
+    
+    // Hide if no valid cursor position
+    if (cursorDistance == null || !bounds || validGpsPoints.length < 2 || totalLapDistance <= 0) {
+      g.style.display = 'none'
+      return
+    }
+    
+    // Calculate percentage through the lap (0 to 1)
+    const lapPercentage = Math.max(0, Math.min(1, cursorDistance / totalLapDistance))
+    
+    // Map percentage to an index in the valid GPS points array
+    const floatIndex = lapPercentage * (validGpsPoints.length - 1)
+    const indexLo = Math.floor(floatIndex)
+    const indexHi = Math.min(indexLo + 1, validGpsPoints.length - 1)
+    const t = floatIndex - indexLo // Fractional part for interpolation
+    
+    const p0 = validGpsPoints[indexLo]
+    const p1 = validGpsPoints[indexHi]
+    if (!p0 || !p1) {
+      g.style.display = 'none'
+      return
+    }
+    
+    // Linear interpolation between the two GPS points
+    const lat = p0.lat + (p1.lat - p0.lat) * t
+    const lon = p0.lon + (p1.lon - p0.lon) * t
+    
+    // Use the same gpsToSvg function that the track paths use for consistent positioning
+    const svgPos = gpsToSvg(lat, lon)
+    if (!svgPos) {
+      g.style.display = 'none'
+      return
+    }
+    
+    // Update all circle elements directly
+    g.style.display = 'block'
+    const circles = g.querySelectorAll('circle')
+    circles.forEach(circle => {
+      circle.setAttribute('cx', String(svgPos.x))
+      circle.setAttribute('cy', String(svgPos.y))
+    })
+  }, [bounds, gpsToSvg, validGpsPoints, totalLapDistance])
 
   // Fallback to mock track if no GPS data
   if (lapPaths.length === 0) {
@@ -181,8 +342,10 @@ function TrackMap({
     )
   }
 
+  const { width, height } = svgDimensions
+
   return (
-    <svg viewBox="0 0 400 320" className="w-full h-full" preserveAspectRatio="xMidYMid meet">
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="xMidYMid meet">
       {/* Render racing lines for each selected lap */}
       {lapPaths.map(({ lap, path, color }) => (
         <path
@@ -197,46 +360,36 @@ function TrackMap({
         />
       ))}
       
-      {/* Render cursor dots for each lap - synchronized with chart cursors */}
-      {cursorPositions.map(({ lap, x, y, color }) => (
-        <g key={`cursor-${lap}`} style={{ pointerEvents: "none" }}>
-          {/* Outer glow ring */}
-          <circle
-            cx={x}
-            cy={y}
-            r="10"
-            fill="none"
-            stroke={color}
-            strokeWidth="2"
-            opacity="0.4"
-          />
-          {/* Middle glow */}
-          <circle
-            cx={x}
-            cy={y}
-            r="7"
-            fill={color}
-            opacity="0.2"
-          />
-          {/* Main dot with white border */}
-          <circle
-            cx={x}
-            cy={y}
-            r="6"
-            fill={color}
-            stroke="#ffffff"
-            strokeWidth="2.5"
-          />
-          {/* Inner highlight */}
-          <circle
-            cx={x}
-            cy={y}
-            r="3"
-            fill="#ffffff"
-            opacity="0.8"
-          />
-        </g>
-      ))}
+      {/* Render cursor dot for reference lap only - updated via subscription for performance */}
+      <g ref={cursorGroupRef} style={{ pointerEvents: "none", display: "none" }}>
+        {/* Outer glow ring */}
+        <circle
+          r="12"
+          fill="none"
+          stroke={refLapColor}
+          strokeWidth="2.5"
+          opacity="0.5"
+        />
+        {/* Middle glow */}
+        <circle
+          r="8"
+          fill={refLapColor}
+          opacity="0.3"
+        />
+        {/* Main dot with white border */}
+        <circle
+          r="6"
+          fill={refLapColor}
+          stroke="#ffffff"
+          strokeWidth="3"
+        />
+        {/* Inner highlight */}
+        <circle
+          r="3"
+          fill="#ffffff"
+          opacity="1"
+        />
+      </g>
     </svg>
   )
 }
@@ -302,13 +455,107 @@ function CustomTooltipContent({
   )
 }
 
+// Cursor line overlay - uses subscription for direct DOM updates (no React re-renders)
+function CursorOverlay({
+  xMin,
+  xMax,
+  marginLeft,
+  marginRight,
+}: {
+  xMin: number
+  xMax: number
+  marginLeft: number
+  marginRight: number
+}) {
+  const lineRef = useRef<HTMLDivElement>(null)
+  
+  // Subscribe to cursor updates and directly manipulate DOM
+  useCursorSubscription((cursorDistance) => {
+    const el = lineRef.current
+    if (!el) return
+    
+    if (cursorDistance === null || cursorDistance < xMin || cursorDistance > xMax) {
+      el.style.display = 'none'
+      return
+    }
+    
+    const xRange = xMax - xMin
+    if (xRange <= 0) {
+      el.style.display = 'none'
+      return
+    }
+    
+    const normalizedPosition = (cursorDistance - xMin) / xRange
+    el.style.display = 'block'
+    el.style.left = `calc(${marginLeft}px + (100% - ${marginLeft + marginRight}px) * ${normalizedPosition})`
+  }, [xMin, xMax, marginLeft, marginRight])
+  
+  return (
+    <div
+      ref={lineRef}
+      className="absolute top-0 bottom-0 pointer-events-none z-10"
+      style={{
+        display: 'none',
+        width: '2px',
+        backgroundColor: 'white',
+        transform: 'translateX(-50%)',
+        willChange: 'left',
+      }}
+    />
+  )
+}
+
+// Format Y-axis tick values intelligently
+function formatYAxisTick(value: number, yDomain?: [number, number]): string {
+  if (!Number.isFinite(value)) return ""
+  
+  // If domain is provided, use it to determine appropriate precision
+  if (yDomain) {
+    const [min, max] = yDomain
+    const range = Math.abs(max - min)
+    
+    // For very large ranges, use no decimals
+    if (range > 1000) {
+      return Math.round(value).toString()
+    }
+    // For large ranges, use 0-1 decimals
+    if (range > 100) {
+      return value.toFixed(0)
+    }
+    // For medium ranges, use 1 decimal
+    if (range > 10) {
+      return value.toFixed(1)
+    }
+    // For small ranges, use 2 decimals
+    if (range > 1) {
+      return value.toFixed(2)
+    }
+    // For very small ranges, use 3 decimals
+    return value.toFixed(3)
+  }
+  
+  // Fallback: format based on value magnitude
+  const absValue = Math.abs(value)
+  if (absValue >= 1000) {
+    return Math.round(value).toString()
+  }
+  if (absValue >= 100) {
+    return value.toFixed(0)
+  }
+  if (absValue >= 10) {
+    return value.toFixed(1)
+  }
+  if (absValue >= 1) {
+    return value.toFixed(2)
+  }
+  return value.toFixed(3)
+}
+
 // Synced chart component
 interface SyncedChartProps {
   data: any[]
   series: ChartSeries[]
   yDomain?: [number, number]
-  cursorDistance: number | null
-  onCursorMove: (distance: number | null) => void
   chartType?: "monotone" | "stepAfter"
   showYAxisRight?: boolean
   margin?: { top: number; right: number; left: number; bottom: number }
@@ -319,29 +566,33 @@ interface SyncedChartProps {
   xMax?: number | null
   onZoomChange?: (xMin: number | null, xMax: number | null) => void
   originalXMax?: number
-  chartRef?: React.RefObject<HTMLDivElement | null>
 }
 
-function SyncedChart({
+// Inner chart component - memoized, uses cursor store for updates
+const SyncedChartInner = memo(function SyncedChartInner({
   data,
   series,
   yDomain,
-  cursorDistance,
-  onCursorMove,
   chartType = "monotone",
   showYAxisRight = true,
   margin = { top: 10, right: 40, left: 10, bottom: 10 },
   unit = "",
-  formatValue = (v) => v.toFixed(1),
+  formatValue = (v: number) => v.toFixed(1),
   xMin: zoomXMin = null,
   xMax: zoomXMax = null,
   onZoomChange,
   originalXMax,
-  chartRef,
-}: SyncedChartProps) {
+  children,
+}: SyncedChartProps & { children?: React.ReactNode }) {
+  // Use cursor store instead of props for updates
+  const updateCursor = useCursorUpdate()
+  // Each chart has its OWN ref for accurate mouse position calculations
+  const chartRef = useRef<HTMLDivElement>(null)
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null)
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null)
   const [isSelecting, setIsSelecting] = useState(false)
+  const rafRef = useRef<number | null>(null)
+  const pendingDistanceRef = useRef<number | null>(null)
 
   const fullXMax = useMemo(() => {
     if (originalXMax != null) return originalXMax
@@ -375,6 +626,62 @@ function SyncedChart({
     [],
   )
 
+  // Helper to calculate distance from mouse X position
+  const getDistanceFromMouseX = useCallback(
+    (clientX: number): number | null => {
+      if (!chartRef?.current) return null
+      
+      const rect = chartRef.current.getBoundingClientRect()
+      const mouseX = clientX - rect.left
+      const chartWidth = rect.width
+      
+      if (chartWidth <= 0) return null
+      
+      // Account for margins - Recharts uses these margins for axes
+      const marginLeft = margin.left || 10
+      const marginRight = margin.right || 40
+      const plotWidth = Math.max(1, chartWidth - marginLeft - marginRight)
+      const plotX = mouseX - marginLeft
+      
+      // Clamp to plot area
+      const clampedX = Math.max(0, Math.min(plotWidth, plotX))
+      const normalizedX = clampedX / plotWidth
+      const xRange = xMax - xMin
+      const distance = xMin + normalizedX * xRange
+      
+      return Number.isFinite(distance) ? distance : null
+    },
+    [xMin, xMax, margin],
+  )
+
+  // Handle smooth mouse movement with RAF throttling for performance
+  const handleContainerMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!chartRef?.current) return
+      
+      const distance = getDistanceFromMouseX(e.clientX)
+      if (distance == null) return
+      
+      // If selecting (dragging to zoom), update immediately for visual feedback
+      if (isSelecting) {
+        setRefAreaRight(distance)
+        return
+      }
+      
+      // Throttle cursor updates using requestAnimationFrame
+      pendingDistanceRef.current = distance
+      if (rafRef.current == null) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null
+          if (pendingDistanceRef.current != null) {
+            updateCursor(pendingDistanceRef.current)
+          }
+        })
+      }
+    },
+    [isSelecting, getDistanceFromMouseX, updateCursor],
+  )
+
   const handleMouseMove = useCallback(
     (state: any) => {
       if (isSelecting && state?.activeLabel != null) {
@@ -382,15 +689,16 @@ function SyncedChart({
         if (Number.isFinite(distance)) {
           setRefAreaRight(distance)
         }
-      } else if (state?.activePayload && state.activePayload.length > 0) {
-        // Use activePayload to get the distance value directly from the data
+      }
+      // Fallback: Use Recharts' onMouseMove as backup for cursor tracking
+      if (!isSelecting && state?.activePayload && state.activePayload.length > 0) {
         const distance = state.activePayload[0]?.payload?.distance
-        if (distance !== undefined) {
-          onCursorMove(distance)
+        if (distance !== undefined && Number.isFinite(distance)) {
+          updateCursor(distance)
         }
       }
     },
-    [isSelecting, onCursorMove],
+    [isSelecting, updateCursor],
   )
 
   const handleMouseUp = useCallback(() => {
@@ -407,9 +715,15 @@ function SyncedChart({
     if (isSelecting) {
       handleMouseUp()
     } else {
-      onCursorMove(null)
+      updateCursor(null)
     }
-  }, [isSelecting, handleMouseUp, onCursorMove])
+  }, [isSelecting, handleMouseUp, updateCursor])
+
+  const handleContainerMouseLeave = useCallback(() => {
+    if (!isSelecting) {
+      updateCursor(null)
+    }
+  }, [isSelecting, updateCursor])
 
   const handleWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
@@ -478,8 +792,11 @@ function SyncedChart({
     <div
       className="relative w-full h-full min-w-0 min-h-0"
       ref={chartRef}
+      onMouseMove={handleContainerMouseMove}
+      onMouseLeave={handleContainerMouseLeave}
       onWheel={handleWheel}
       onTouchMove={handleTouchMove}
+      onDoubleClick={() => onZoomChange?.(null, null)}
       style={{ touchAction: "none" }}
     >
       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
@@ -516,14 +833,19 @@ function SyncedChart({
           <YAxis
             domain={yDomain}
             tick={{ fontSize: 8, fill: "#6b7280" }}
+            tickFormatter={(value) => formatYAxisTick(value, yDomain)}
             axisLine={{ stroke: "#374151" }}
             orientation={showYAxisRight ? "right" : "left"}
             width={showYAxisRight ? 25 : 30}
           />
 
-          {/* Sector highlighting (placeholder) */}
-          <ReferenceLine x={1} stroke="#4a3535" strokeWidth={20} />
-          <ReferenceLine x={3} stroke="#4a3535" strokeWidth={20} />
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="#374151"
+            opacity={0.2}
+            horizontal={true}
+            vertical={false}
+          />
 
           {/* Data areas */}
           {visibleSeries.map((s) => {
@@ -552,12 +874,7 @@ function SyncedChart({
             />
           )}
 
-          {/* Cursor line - smooth position, rendered on top */}
-          {cursorDistance !== null && cursorDistance >= xMin && cursorDistance <= xMax && (
-            <ReferenceLine x={cursorDistance} stroke="#ffffff" strokeWidth={2} />
-          )}
-
-          {/* Tooltip with visible cursor line */}
+          {/* Tooltip - cursor line rendered as overlay for performance */}
           <Tooltip
             content={(props) => (
               <CustomTooltipContent
@@ -567,13 +884,34 @@ function SyncedChart({
                 formatValue={formatValue}
               />
             )}
-            cursor={{ stroke: "#ffffff", strokeWidth: 1, strokeOpacity: 0.5 }}
+            cursor={false}
+            isAnimationActive={false}
+            animationDuration={0}
           />
         </AreaChart>
       </ResponsiveContainer>
+      {children}
     </div>
   )
-}
+})
+
+// Wrapper component that adds cursor overlay
+const SyncedChart = memo(function SyncedChart(props: SyncedChartProps) {
+  const margin = props.margin ?? { top: 10, right: 40, left: 10, bottom: 10 }
+  const xMin = props.xMin ?? 0
+  const xMax = props.xMax ?? props.originalXMax ?? 0
+  
+  return (
+    <SyncedChartInner {...props} margin={margin}>
+      <CursorOverlay
+        xMin={xMin}
+        xMax={xMax}
+        marginLeft={margin.left}
+        marginRight={margin.right}
+      />
+    </SyncedChartInner>
+  )
+})
 
 type IbtLapPoint = {
   distanceKm: number
@@ -658,13 +996,21 @@ function parseSectorBoundaries(yaml: string): SectorBoundary[] {
     
     if (inSectors) {
       const currentIndent = line.match(/^(\s*)/)?.[1]?.length ?? 0
-      if (currentIndent <= indentLevel && line.trim() && !line.includes("-")) {
+      // Exit if we hit a line at the same or less indent that's not part of the sectors list
+      // (i.e., it's a new top-level key like "CarSetup:")
+      if (currentIndent <= indentLevel && line.trim() && !line.includes("-") && !line.includes("SectorNum") && !line.includes("SectorStartPct")) {
         break // Exited sectors section
       }
       
+      // Look for SectorNum in the current line or the previous line (for list item format)
       if (line.includes("SectorNum:")) {
         const sectorNumMatch = line.match(/SectorNum:\s*(\d+)/)
-        const startPctMatch = lines[i + 1]?.match(/SectorStartPct:\s*([\d.]+)/)
+        // Look for SectorStartPct in the next line (indented)
+        let startPctMatch = lines[i + 1]?.match(/SectorStartPct:\s*([\d.]+)/)
+        // Also check current line in case it's on the same line
+        if (!startPctMatch) {
+          startPctMatch = line.match(/SectorStartPct:\s*([\d.]+)/)
+        }
         
         if (sectorNumMatch && startPctMatch) {
           sectors.push({
@@ -680,6 +1026,14 @@ function parseSectorBoundaries(yaml: string): SectorBoundary[] {
   sectors.sort((a, b) => a.sectorNum - b.sectorNum)
   if (sectors.length === 0 || sectors[0]!.sectorNum !== 0) {
     sectors.unshift({ sectorNum: 0, startPct: 0 })
+  }
+  
+  // Ensure we have a final sector at 100% if the last sector is not at 100%
+  const lastSector = sectors[sectors.length - 1]
+  if (lastSector && lastSector.startPct < 100) {
+    // Add a final sector boundary at 100% with the next sector number
+    const maxSectorNum = Math.max(...sectors.map(s => s.sectorNum))
+    sectors.push({ sectorNum: maxSectorNum + 1, startPct: 100 })
   }
   
   return sectors
@@ -776,9 +1130,78 @@ function interpolateValue(
   return y0 + (y1 - y0) * t
 }
 
+// Calculate distance between two GPS coordinates using Haversine formula
+// Returns distance in meters
+function gpsDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000 // Earth's radius in meters
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLon = ((lon2 - lon1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+// Interpolate GPS coordinates at a given distance
+function interpolateGps(
+  points: IbtLapPoint[],
+  distanceKm: number,
+): { lat: number; lon: number } | null {
+  if (points.length === 0) return null
+  
+  const lat = interpolateValue(points, distanceKm, "distanceKm", (p) => p.lat)
+  const lon = interpolateValue(points, distanceKm, "distanceKm", (p) => p.lon)
+  
+  if (lat == null || lon == null) return null
+  return { lat, lon }
+}
+
+// Calculate signed perpendicular distance from a point to a line segment
+// Returns positive if point is to the left of the line (when looking in direction of travel), negative if to the right
+function perpendicularDistanceMeters(
+  pointLat: number,
+  pointLon: number,
+  lineStartLat: number,
+  lineStartLon: number,
+  lineEndLat: number,
+  lineEndLon: number,
+): number {
+  // Convert to local coordinates (meters) for simpler calculation
+  // Use a simple approximation: 1 degree lat ≈ 111km, 1 degree lon ≈ 111km * cos(lat)
+  const latToMeters = 111000
+  const lonToMeters = 111000 * Math.cos((lineStartLat * Math.PI) / 180)
+  
+  const px = (pointLon - lineStartLon) * lonToMeters
+  const py = (pointLat - lineStartLat) * latToMeters
+  const dx = (lineEndLon - lineStartLon) * lonToMeters
+  const dy = (lineEndLat - lineStartLat) * latToMeters
+  
+  // Calculate perpendicular distance using cross product
+  // The sign indicates which side of the line the point is on
+  const crossProduct = dx * py - dy * px
+  const lineLength = Math.sqrt(dx * dx + dy * dy)
+  
+  if (lineLength === 0) {
+    // Line segment has zero length, just return straight-line distance
+    return Math.sqrt(px * px + py * py)
+  }
+  
+  // Perpendicular distance (signed)
+  return crossProduct / lineLength
+}
+
 export function LapAnalysis() {
-  // Shared cursor distance (smooth value, not snapped to data points)
-  const [cursorDistance, setCursorDistance] = useState<number | null>(null)
+  // Create cursor store once - bypasses React state for performance
+  const cursorStoreRef = useRef<CursorStore | null>(null)
+  if (!cursorStoreRef.current) {
+    cursorStoreRef.current = createCursorStore()
+  }
+  const cursorStore = cursorStoreRef.current
+  
   const [ibtLapDataByLap, setIbtLapDataByLap] = useState<Record<number, IbtLapData> | null>(null)
   const [ibtLaps, setIbtLaps] = useState<number[]>([])
   const [selectedLaps, setSelectedLaps] = useState<number[]>([])
@@ -792,11 +1215,6 @@ export function LapAnalysis() {
   // Zoom state (shared across all charts)
   const [zoomXMin, setZoomXMin] = useState<number | null>(null)
   const [zoomXMax, setZoomXMax] = useState<number | null>(null)
-  const chartRef = useRef<HTMLDivElement>(null)
-
-  const handleCursorMove = useCallback((distance: number | null) => {
-    setCursorDistance(distance)
-  }, [])
 
   const handleZoomChange = useCallback((xMin: number | null, xMax: number | null) => {
     setZoomXMin(xMin)
@@ -821,13 +1239,13 @@ export function LapAnalysis() {
         LAP_COLOR_PALETTE[Object.keys(prev).length % LAP_COLOR_PALETTE.length]
       return { ...prev, [lap]: nextColor }
     })
-    setCursorDistance(null)
-  }, [])
+    cursorStore.setDistance(null)
+  }, [cursorStore])
 
   const clearSelectedLaps = useCallback(() => {
     setSelectedLaps([])
-    setCursorDistance(null)
-  }, [])
+    cursorStore.setDistance(null)
+  }, [cursorStore])
 
   const loadIbt = useCallback(
     async (blob: Blob, label: string) => {
@@ -1021,7 +1439,7 @@ export function LapAnalysis() {
         setSelectedLaps([bestLap])
         setLapColors({ [bestLap]: LAP_COLOR_PALETTE[0] })
         setIbtSourceLabel(`${label} (stride ${stride}, tickRate ${header.tickRate})`)
-        setCursorDistance(null)
+        cursorStore.setDistance(null)
         setZoomXMin(null)
         setZoomXMax(null)
       } catch (e) {
@@ -1059,7 +1477,7 @@ export function LapAnalysis() {
     return refData.distanceKm
   }, [ibtLapDataByLap, selectedLaps])
 
-  // Compute unified telemetry data from selected laps
+  // Compute unified telemetry data from selected laps (downsampled for performance)
   const telemetryData = useMemo(() => {
     if (!ibtLapDataByLap || selectedLaps.length === 0) {
       return []
@@ -1069,8 +1487,11 @@ export function LapAnalysis() {
     const refData = ibtLapDataByLap[refLap]
     if (!refData) return []
 
-    // Build distance grid from reference lap
-    const distances = refData.byDist.map((p) => p.distanceKm)
+    // Downsample to max ~500 points for chart performance
+    const MAX_CHART_POINTS = 500
+    const allDistances = refData.byDist.map((p) => p.distanceKm)
+    const stride = Math.max(1, Math.ceil(allDistances.length / MAX_CHART_POINTS))
+    const distances = allDistances.filter((_, i) => i % stride === 0)
 
     // For each distance point, interpolate values from all selected laps
     const result: any[] = []
@@ -1119,13 +1540,32 @@ export function LapAnalysis() {
           point[`timeDelta_${lap}`] = null
         }
 
-        // Line distance: simplified as distance offset (positive = ahead, negative = behind)
-        if (refTime != null) {
-          const lapDistAtRefTime = interpolateValue(lapData.byTime, refTime, "timeSec", (p) => p.distanceKm)
-          if (lapDistAtRefTime != null) {
-            point[`lineDist_${lap}`] = lapDistAtRefTime - dist
+        // Line distance: perpendicular distance in meters from comparison lap to reference lap racing line
+        // at the same distance through the lap (using GPS coordinates)
+        // Positive = left of reference line, Negative = right of reference line
+        const refGps = interpolateGps(refData.byDist, dist)
+        const lapGps = interpolateGps(lapData.byDist, dist)
+        
+        if (refGps && lapGps) {
+          // Get a point slightly ahead on the reference lap to determine direction
+          const lookAheadDist = Math.min(dist + 0.01, refData.distanceKm) // 10 meters ahead
+          const refGpsAhead = interpolateGps(refData.byDist, lookAheadDist)
+          
+          if (refGpsAhead) {
+            // Calculate perpendicular distance from comparison lap point to reference lap line segment
+            const perpDist = perpendicularDistanceMeters(
+              lapGps.lat,
+              lapGps.lon,
+              refGps.lat,
+              refGps.lon,
+              refGpsAhead.lat,
+              refGpsAhead.lon
+            )
+            point[`lineDist_${lap}`] = perpDist
           } else {
-            point[`lineDist_${lap}`] = null
+            // Fallback to straight-line distance if we can't determine direction
+            const distanceMeters = gpsDistanceMeters(refGps.lat, refGps.lon, lapGps.lat, lapGps.lon)
+            point[`lineDist_${lap}`] = distanceMeters
           }
         } else {
           point[`lineDist_${lap}`] = null
@@ -1203,7 +1643,12 @@ export function LapAnalysis() {
     }))
   }, [selectedLaps, lapColors])
 
+  // Memoized formatValue functions to prevent SyncedChart re-renders
+  const formatDecimal1 = useCallback((v: number) => v.toFixed(1), [])
+  const formatDecimal0 = useCallback((v: number) => v.toFixed(0), [])
+
   return (
+    <CursorStoreContext.Provider value={cursorStore}>
     <div className="flex h-screen flex-col bg-background text-foreground">
       {/* Header */}
       <header className="flex h-12 items-center justify-between border-b border-border px-4">
@@ -1490,13 +1935,25 @@ export function LapAnalysis() {
         <div className="flex flex-1 flex-col">
           <div className="flex flex-1">
             {/* Track and main charts */}
-            <div className="flex flex-1 flex-col">
+            <div className="flex flex-1 flex-col min-h-0">
               {/* Track map and warning */}
-              <div className="relative flex-1 border-b border-border p-4 overflow-hidden">
+              <div className="relative flex-shrink-0 h-[400px] border-b border-border p-4 overflow-hidden">
                 <div className="absolute left-2 top-2 flex flex-col gap-1 z-10">
                   <Button variant="outline" size="icon-xs" className="h-5 w-5">
                     <span className="text-[8px]">≡</span>
                   </Button>
+                  {(zoomXMin != null || zoomXMax != null) && (
+                    <Button 
+                      variant="outline" 
+                      size="xs" 
+                      onClick={handleResetZoom} 
+                      className="h-5 text-[9px] px-1.5"
+                      title="Reset chart zoom (or double-click any chart)"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Reset
+                    </Button>
+                  )}
                 </div>
                 <div className="absolute right-4 top-4 z-10">
                   <div className="flex items-center gap-2 rounded bg-yellow-500/20 px-2 py-1 text-yellow-500">
@@ -1508,7 +1965,6 @@ export function LapAnalysis() {
                     lapDataByLap={ibtLapDataByLap} 
                     selectedLaps={selectedLaps} 
                     lapColors={lapColors}
-                    cursorDistance={cursorDistance}
                   />
                 </div>
               </div>
@@ -1523,18 +1979,14 @@ export function LapAnalysis() {
                         Reset zoom
                       </Button>
                     )}
-                    {cursorDistance !== null && (
-                      <span className="text-[10px] text-muted-foreground">{cursorDistance.toFixed(3)} km</span>
-                    )}
+                    <CursorDistanceDisplay />
                   </div>
                 </div>
                 <div className="h-[calc(100%-16px)] min-h-0 min-w-0">
                   <SyncedChart
                     data={telemetryData}
                     series={lineDistSeries}
-                    yDomain={[-30, 30]}
-                    cursorDistance={cursorDistance}
-                    onCursorMove={handleCursorMove}
+                    yDomain={[-15, 15]}
                     showYAxisRight={false}
                     margin={{ top: 5, right: 30, left: 30, bottom: 5 }}
                     unit=" m"
@@ -1542,7 +1994,6 @@ export function LapAnalysis() {
                     xMax={zoomXMax}
                     onZoomChange={handleZoomChange}
                     originalXMax={originalXMax ?? undefined}
-                    chartRef={chartRef}
                   />
                 </div>
               </div>
@@ -1551,16 +2002,12 @@ export function LapAnalysis() {
               <div className="h-36 border-b border-border p-2 overflow-hidden">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[10px] text-muted-foreground">Time delta</span>
-                  {cursorDistance !== null && (
-                    <span className="text-[10px] text-muted-foreground">{cursorDistance.toFixed(3)} km</span>
-                  )}
+                  <CursorDistanceDisplay />
                 </div>
                 <div className="h-[calc(100%-16px)] min-h-0 min-w-0">
                   <SyncedChart
                     data={telemetryData}
                     series={timeDeltaSeries}
-                    cursorDistance={cursorDistance}
-                    onCursorMove={handleCursorMove}
                     showYAxisRight={false}
                     margin={{ top: 5, right: 30, left: 30, bottom: 5 }}
                     unit=" sec"
@@ -1568,7 +2015,6 @@ export function LapAnalysis() {
                     xMax={zoomXMax}
                     onZoomChange={handleZoomChange}
                     originalXMax={originalXMax ?? undefined}
-                    chartRef={chartRef}
                   />
                 </div>
               </div>
@@ -1601,15 +2047,12 @@ export function LapAnalysis() {
                       data={telemetryData}
                       series={speedSeries}
                       yDomain={[0, 250]}
-                      cursorDistance={cursorDistance}
-                      onCursorMove={handleCursorMove}
                       unit=" km/h"
-                      formatValue={(v) => v.toFixed(1)}
+                      formatValue={formatDecimal1}
                       xMin={zoomXMin}
                       xMax={zoomXMax}
                       onZoomChange={handleZoomChange}
                       originalXMax={originalXMax ?? undefined}
-                      chartRef={chartRef}
                     />
                     <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Speed</div>
                   </div>
@@ -1620,15 +2063,12 @@ export function LapAnalysis() {
                   data={telemetryData}
                   series={throttleSeries}
                   yDomain={[0, 100]}
-                  cursorDistance={cursorDistance}
-                  onCursorMove={handleCursorMove}
                   unit="%"
-                  formatValue={(v) => v.toFixed(0)}
+                  formatValue={formatDecimal0}
                   xMin={zoomXMin}
                   xMax={zoomXMax}
                   onZoomChange={handleZoomChange}
                   originalXMax={originalXMax ?? undefined}
-                  chartRef={chartRef}
                 />
                     <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Throttle</div>
                   </div>
@@ -1639,15 +2079,12 @@ export function LapAnalysis() {
                       data={telemetryData}
                       series={brakeSeries}
                       yDomain={[0, 100]}
-                      cursorDistance={cursorDistance}
-                      onCursorMove={handleCursorMove}
                       unit="%"
-                      formatValue={(v) => v.toFixed(0)}
+                      formatValue={formatDecimal0}
                       xMin={zoomXMin}
                       xMax={zoomXMax}
                       onZoomChange={handleZoomChange}
                       originalXMax={originalXMax ?? undefined}
-                      chartRef={chartRef}
                     />
                     <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Brake</div>
                   </div>
@@ -1658,15 +2095,12 @@ export function LapAnalysis() {
                       data={telemetryData}
                       series={gearSeries}
                       yDomain={[0, 7]}
-                      cursorDistance={cursorDistance}
-                      onCursorMove={handleCursorMove}
                       chartType="stepAfter"
-                      formatValue={(v) => v.toFixed(0)}
+                      formatValue={formatDecimal0}
                       xMin={zoomXMin}
                       xMax={zoomXMax}
                       onZoomChange={handleZoomChange}
                       originalXMax={originalXMax ?? undefined}
-                      chartRef={chartRef}
                     />
                     <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">Gear</div>
                   </div>
@@ -1677,15 +2111,12 @@ export function LapAnalysis() {
                       data={telemetryData}
                       series={rpmSeries}
                       yDomain={[2000, 8000]}
-                      cursorDistance={cursorDistance}
-                      onCursorMove={handleCursorMove}
                       unit=" rpm"
-                      formatValue={(v) => v.toFixed(0)}
+                      formatValue={formatDecimal0}
                       xMin={zoomXMin}
                       xMax={zoomXMax}
                       onZoomChange={handleZoomChange}
                       originalXMax={originalXMax ?? undefined}
-                      chartRef={chartRef}
                     />
                     <div className="absolute left-2 top-2 text-[10px] text-muted-foreground pointer-events-none">RPM</div>
                   </div>
@@ -1696,15 +2127,12 @@ export function LapAnalysis() {
                       data={telemetryData}
                       series={steeringSeries}
                       yDomain={[-200, 200]}
-                      cursorDistance={cursorDistance}
-                      onCursorMove={handleCursorMove}
                       unit="°"
-                      formatValue={(v) => v.toFixed(1)}
+                      formatValue={formatDecimal1}
                       xMin={zoomXMin}
                       xMax={zoomXMax}
                       onZoomChange={handleZoomChange}
                       originalXMax={originalXMax ?? undefined}
-                      chartRef={chartRef}
                     />
                     <div className="absolute left-2 top-2 text-[10px] text-muted-foreground whitespace-nowrap pointer-events-none">Steering wheel angle</div>
                   </div>
@@ -1718,17 +2146,26 @@ export function LapAnalysis() {
           </div>
 
           {/* Sector indicators */}
-          <div className="flex h-8 border-t border-border">
-            <div className="flex flex-1 items-center justify-center border-r border-border bg-background">
-              <span className="text-xs font-medium">S1</span>
+          {sectorBoundaries.length > 1 && (
+            <div className="flex h-8 border-t border-border">
+              {sectorBoundaries.slice(1).map((sector, index) => {
+                const sectorNum = sector.sectorNum
+                // Alternate background colors for visual distinction
+                const isEven = index % 2 === 0
+                const isLast = index === sectorBoundaries.length - 2
+                return (
+                  <div
+                    key={sectorNum}
+                    className={`flex flex-1 items-center justify-center ${
+                      !isLast ? "border-r border-border" : ""
+                    } ${isEven ? "bg-background" : "bg-muted/30"}`}
+                  >
+                    <span className="text-xs font-medium">S{sectorNum}</span>
+                  </div>
+                )
+              })}
             </div>
-            <div className="flex flex-1 items-center justify-center border-r border-border bg-red-900/30">
-              <span className="text-xs font-medium">S2</span>
-            </div>
-            <div className="flex flex-1 items-center justify-center bg-background">
-              <span className="text-xs font-medium">S3</span>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -1740,5 +2177,6 @@ export function LapAnalysis() {
         <div className="flex-1" />
       </footer>
     </div>
+    </CursorStoreContext.Provider>
   )
 }
