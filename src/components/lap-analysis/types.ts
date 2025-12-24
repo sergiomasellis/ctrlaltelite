@@ -43,6 +43,8 @@ export type IbtLapData = {
   distanceKm: number
   points: number
   sectorTimes: SectorTimes[]
+  sessionNum?: number
+  sessionType?: string
 }
 
 

@@ -178,6 +178,16 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
   const formatSessionType = (sessionType?: string, eventType?: string) => {
     const type = sessionType || eventType || ""
     if (!type) return null
+    
+    // Normalize common iRacing session type names
+    const normalized = type.toLowerCase().trim()
+    if (normalized.includes("race")) return "Race"
+    if (normalized.includes("qualify")) return "Qualifying"
+    if (normalized.includes("practice")) return "Practice"
+    if (normalized.includes("warmup")) return "Warmup"
+    if (normalized.includes("test")) return "Testing"
+    
+    // Default: capitalize first letter
     return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase()
   }
 

@@ -22,7 +22,7 @@ interface TelemetryCache {
 }
 
 const CACHE_FILE = "telemetry-cache.json"
-const CACHE_VERSION = 6 // Incremented to force refresh of incomplete metadata entries
+const CACHE_VERSION = 13 // Incremented to force refresh of incomplete metadata entries
 
 async function loadCache(): Promise<TelemetryCache> {
   try {

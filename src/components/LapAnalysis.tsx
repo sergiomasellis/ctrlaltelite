@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { readIbtHeader, readIbtSamples, readIbtVarHeaders, readIbtSessionInfoYaml, type IbtValue } from "@/lib/ibt"
+import { readIbtHeader, readIbtSamples, readIbtVarHeaders, readIbtSessionInfoYaml, parseSessionsFromYaml, parseWeekendInfoFromYaml, type IbtValue, type IbtWeekendInfo } from "@/lib/ibt"
 import { createCursorStore, CursorStoreContext } from "@/lib/cursorStore"
 import { formatLapTime } from "@/lib/telemetry-utils"
 import { parseSectorBoundaries, calculateSectorTimes } from "@/lib/sector-utils"
@@ -27,6 +27,7 @@ import type { ChartSeries } from "@/components/telemetry/types"
 import { TelemetrySourceInput } from "@/components/lap-analysis/TelemetrySourceInput"
 import { LapSelector } from "@/components/lap-analysis/LapSelector"
 import { SectorTimesTable } from "@/components/lap-analysis/SectorTimesTable"
+import { SessionInfo } from "@/components/lap-analysis/SessionInfo"
 import { LapStatsBar } from "@/components/lap-analysis/LapStatsBar"
 import { LapComparisonLegend } from "@/components/lap-analysis/LapComparisonLegend"
 import { SectorIndicators } from "@/components/lap-analysis/SectorIndicators"
@@ -93,6 +94,9 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
   const [ibtProgress, setIbtProgress] = useState<{ processedRecords: number; totalRecords: number } | null>(null)
   const [ibtError, setIbtError] = useState<string | null>(null)
   const [sectorBoundaries, setSectorBoundaries] = useState<SectorBoundary[]>([])
+  const [weekendInfo, setWeekendInfo] = useState<IbtWeekendInfo | null>(null)
+  const [sessionsByNum, setSessionsByNum] = useState<Record<number, import("@/lib/ibt").IbtSessionInfo>>({})
+  const [driverCarIdx, setDriverCarIdx] = useState<number | null>(null)
 
   // Chart order state
   const [chartOrder, setChartOrder] = useState<ChartId[]>(DEFAULT_CHART_ORDER)
@@ -185,10 +189,26 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         const header = await readIbtHeader(blob)
         const vars = await readIbtVarHeaders(blob, header)
 
-        // Parse session YAML to extract sector boundaries
+        // Parse session YAML to extract sector boundaries and session information
         const sessionYaml = await readIbtSessionInfoYaml(blob, header)
         const sectors = parseSectorBoundaries(sessionYaml)
         setSectorBoundaries(sectors)
+        
+        // Parse session information from YAML
+        const parsedSessions = parseSessionsFromYaml(sessionYaml)
+        setSessionsByNum(parsedSessions)
+        
+        // Extract driver's CarIdx
+        const driverCarIdxMatch = sessionYaml.match(/DriverCarIdx:\s*(\d+)/)
+        const carIdx = driverCarIdxMatch ? parseInt(driverCarIdxMatch[1], 10) : null
+        setDriverCarIdx(carIdx)
+        
+        // Parse WeekendInfo metadata from YAML (needed for fallback session type)
+        const weekendInfoData = parseWeekendInfoFromYaml(sessionYaml)
+        setWeekendInfo(weekendInfoData)
+        
+        // Check if SessionNum variable exists in the telemetry file
+        const hasSessionNum = vars.some(v => v.name.toLowerCase() === "sessionnum")
 
         const recordCount =
           header.diskSubHeader?.recordCount ??
@@ -198,33 +218,40 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         const targetPoints = 10_000
         const stride = Math.max(1, Math.floor(recordCount / targetPoints))
 
+        const varNames = [
+          "SessionTime",
+          "Lap",
+          "LapDist",
+          "Speed",
+          "RPM",
+          "Gear",
+          "Throttle",
+          "Brake",
+          "BrakeABSactive",
+          "SteeringWheelAngle",
+          "Lat",
+          "Lon",
+          "LFtempM",
+          "RFtempM",
+          "LRtempM",
+          "RRtempM",
+          "LFpressure",
+          "RFpressure",
+          "LRpressure",
+          "RRpressure",
+          "LFwearM",
+          "RFwearM",
+          "LRwearM",
+          "RRwearM",
+        ]
+        
+        // Add SessionNum if available
+        if (hasSessionNum) {
+          varNames.push("SessionNum")
+        }
+
         const rows = await readIbtSamples(blob, header, vars, {
-          varNames: [
-            "SessionTime",
-            "Lap",
-            "LapDist",
-            "Speed",
-            "RPM",
-            "Gear",
-            "Throttle",
-            "Brake",
-            "BrakeABSactive",
-            "SteeringWheelAngle",
-            "Lat",
-            "Lon",
-            "LFtempM",
-            "RFtempM",
-            "LRtempM",
-            "RRtempM",
-            "LFpressure",
-            "RFpressure",
-            "LRpressure",
-            "RRpressure",
-            "LFwearM",
-            "RFwearM",
-            "LRwearM",
-            "RRwearM",
-          ],
+          varNames,
           stride,
           onProgress: (p) => setIbtProgress(p),
         })
@@ -233,11 +260,20 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
           typeof v === "number" && Number.isFinite(v) ? v : null
 
         const byLap: Record<number, Array<Record<string, IbtValue>>> = {}
+        const lapSessionNums: Record<number, number | null> = {}
         for (const r of rows) {
           const lap = num(r["Lap"])
           if (lap == null) continue
           byLap[lap] ??= []
           byLap[lap].push(r)
+          
+          // Track SessionNum for this lap (use first non-null value) if available
+          if (hasSessionNum && lapSessionNums[lap] == null) {
+            const sessionNum = num(r["SessionNum"])
+            if (sessionNum != null) {
+              lapSessionNums[lap] = sessionNum
+            }
+          }
         }
 
         const lapNums = Object.keys(byLap)
@@ -377,6 +413,44 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
             sectors,
           )
 
+          // Get session information for this lap
+          const sessionNum = hasSessionNum ? (lapSessionNums[lap] ?? null) : null
+          const sessionInfo = sessionNum != null ? parsedSessions[sessionNum] : null
+          let sessionType = sessionInfo?.sessionType
+          
+          // If no session info found and we have sessions, try to infer from available data
+          if (!sessionType && Object.keys(parsedSessions).length > 0) {
+            const sessionEntries = Object.values(parsedSessions)
+            
+            // If WeekendInfo EventType is Race, prioritize finding Race session
+            if (weekendInfoData?.sessionType?.toLowerCase().includes("race")) {
+              const raceSession = sessionEntries.find(s => 
+                s.sessionType && (s.sessionType.toLowerCase().includes("race") || s.sessionName?.toLowerCase().includes("race"))
+              )
+              if (raceSession) {
+                sessionType = raceSession.sessionType
+              }
+            }
+            
+            // If still no session type, use first/only session
+            if (!sessionType) {
+              if (sessionEntries.length === 1) {
+                sessionType = sessionEntries[0]?.sessionType
+              } else {
+                // If multiple sessions, prefer Race if available, otherwise use first
+                const raceSession = sessionEntries.find(s => 
+                  s.sessionType && (s.sessionType.toLowerCase().includes("race") || s.sessionName?.toLowerCase().includes("race"))
+                )
+                sessionType = raceSession?.sessionType || sessionEntries[0]?.sessionType
+              }
+            }
+          }
+          
+          // Final fallback: use WeekendInfo EventType if available
+          if (!sessionType && weekendInfoData?.sessionType) {
+            sessionType = weekendInfoData.sessionType
+          }
+
           lapDataByLap[lap] = {
             byDist,
             byTime,
@@ -384,6 +458,8 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
             distanceKm,
             points: points.length,
             sectorTimes,
+            sessionNum: sessionNum ?? undefined,
+            sessionType: sessionType || undefined,
           }
         }
 
@@ -976,6 +1052,17 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                       lapDataByLap={ibtLapDataByLap}
                       lapColors={lapColors}
                       sectorBoundaries={sectorBoundaries}
+                    />
+                  </div>
+
+                  <div className="flex-shrink-0 rounded-xl border border-border/40 bg-card/30 overflow-hidden shadow-sm hover:shadow-md transition-all">
+                    <SessionInfo
+                      selectedLaps={selectedLaps}
+                      lapDataByLap={ibtLapDataByLap}
+                      lapColors={lapColors}
+                      weekendInfo={weekendInfo}
+                      sessionsByNum={sessionsByNum}
+                      driverCarIdx={driverCarIdx}
                     />
                   </div>
                 </div>
