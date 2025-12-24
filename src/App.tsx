@@ -29,7 +29,7 @@ export function App() {
 
   if (!selectedFile) {
     return (
-      <div className="dark h-screen">
+      <div className="h-screen">
         <div className="flex h-screen flex-col">
           <TitleBar />
           <div className="min-h-0 flex-1">
@@ -48,7 +48,7 @@ export function App() {
   }
 
   return (
-    <div className="dark h-screen">
+    <div className="h-screen">
       <div className="flex h-screen flex-col">
         <TitleBar />
         <div className="min-h-0 flex-1">

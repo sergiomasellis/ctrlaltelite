@@ -7,7 +7,10 @@ import {
   AlertCircle,
   ArrowLeft,
   Loader2,
+  Sun,
+  Moon,
 } from "lucide-react"
+import { useTheme } from "@/lib/theme-provider"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -99,6 +102,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
   // Zoom state (shared across all charts)
   const [zoomXMin, setZoomXMin] = useState<number | null>(null)
   const [zoomXMax, setZoomXMax] = useState<number | null>(null)
+  const { theme, setTheme } = useTheme()
 
   const handleZoomChange = useCallback((xMin: number | null, xMax: number | null) => {
     setZoomXMin(xMin)
@@ -917,6 +921,19 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                 </div>
               </div>
             )}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-full"
+            >
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
+              <span className="sr-only">Toggle theme</span>
+            </Button>
             <Button variant="ghost" size="icon-sm" className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-full">
               <Settings className="h-4 w-4" />
             </Button>

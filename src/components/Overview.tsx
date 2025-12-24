@@ -21,8 +21,11 @@ import {
   Sparkles,
   ArrowRight,
   User,
-  Award
+  Award,
+  Sun,
+  Moon
 } from "lucide-react"
+import { useTheme } from "@/lib/theme-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -58,25 +61,25 @@ function CountryFlag({ countryName }: { countryName: string }) {
         const countryCode = COUNTRY_NAME_TO_CODE[countryName] || countryName.slice(0, 2).toUpperCase()
         const response = await fetch(`https://cdn.jsdelivr.net/npm/country-flag-emoji-json@2.0.0/dist/index.json`)
         const flags: Array<{ name: string; code: string; emoji: string; image?: string }> = await response.json()
-        
+
         // Try to find by exact name match first
-        let flag = flags.find((f) => 
+        let flag = flags.find((f) =>
           f.name.toLowerCase() === countryName.toLowerCase()
         )
-        
+
         // If not found, try partial match
         if (!flag) {
-          flag = flags.find((f) => 
+          flag = flags.find((f) =>
             f.name.toLowerCase().includes(countryName.toLowerCase()) ||
             countryName.toLowerCase().includes(f.name.toLowerCase())
           )
         }
-        
+
         // If still not found, try by country code
         if (!flag) {
           flag = flags.find((f) => f.code === countryCode)
         }
-        
+
         if (flag) {
           // Use the image URL from the JSON if available, otherwise construct it
           if (flag.image) {
@@ -104,8 +107,8 @@ function CountryFlag({ countryName }: { countryName: string }) {
   }
 
   return (
-    <img 
-      src={flagSvg} 
+    <img
+      src={flagSvg}
       alt={countryName}
       className="h-4 w-6 object-cover rounded border border-border/20"
       title={countryName}
@@ -120,6 +123,8 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
   const [error, setError] = useState<string | null>(null)
   const [lastScanAt, setLastScanAt] = useState<Date | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+
+  const { theme, setTheme } = useTheme()
 
   const loadFiles = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) {
@@ -320,7 +325,21 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
               <Upload className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Import</span>
             </Button>
-            
+
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="h-9 w-9 border-border/60 bg-background/50 backdrop-blur-sm transition-all hover:bg-background/80"
+            >
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
+              <span className="sr-only">Toggle theme</span>
+            </Button>
+
             {/* Driver Profile - Far Right */}
             {driverInfo && (
               <>
@@ -449,9 +468,9 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-2.5 relative z-10">
-                <Button 
-                  variant="outline" 
-                  className="w-full justify-start h-auto py-3 px-4 text-left bg-background/60 border-border/60 hover:bg-primary/5 hover:border-primary/30 group transition-all" 
+                <Button
+                  variant="outline"
+                  className="w-full justify-start h-auto py-3 px-4 text-left bg-background/60 border-border/60 hover:bg-primary/5 hover:border-primary/30 group transition-all"
                   onClick={onFileUpload}
                 >
                   <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center mr-3 group-hover:bg-primary/20 group-hover:scale-110 transition-all">
@@ -463,7 +482,7 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
                   </div>
                   <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all ml-auto" />
                 </Button>
-                
+
                 <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3.5 flex items-start gap-3 transition-all hover:bg-muted/20 hover:border-primary/30 group">
                   <div className="h-8 w-8 rounded-lg bg-emerald-500/10 flex items-center justify-center flex-shrink-0 group-hover:bg-emerald-500/20 transition-colors">
                     <FolderOpen className="h-4 w-4 text-emerald-500" />
