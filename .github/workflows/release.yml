@@ -132,14 +132,36 @@ jobs:
           git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.final_version.outputs.version }}"
           git push || exit 0
 
+      - name: Import Windows certificate
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ($env:WINDOWS_CERTIFICATE -and $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            Write-Host "Importing Windows code signing certificate..."
+            New-Item -ItemType directory -Path certificate -Force | Out-Null
+            Set-Content -Path certificate/tempCert.txt -Value $env:WINDOWS_CERTIFICATE
+            certutil -decode certificate/tempCert.txt certificate/certificate.pfx
+            Remove-Item -Path certificate/tempCert.txt -Force
+            Import-PfxCertificate -FilePath certificate/certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText)
+            Remove-Item -Path certificate -Recurse -Force
+            Write-Host "Certificate imported successfully"
+          } else {
+            Write-Host "WINDOWS_CERTIFICATE or WINDOWS_CERTIFICATE_PASSWORD secret not set, skipping code signing"
+            Write-Host "Note: Code signing is optional. Your app will still build without it."
+          }
+
       - name: Build Vite project
         run: bun run build
 
       - name: Build Tauri project
         run: bun run tauri:build
         env:
+          # Tauri v2 signing (if using Tauri's signing method)
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          # Windows code signing (if using standard Windows signing)
+          # Certificate should already be imported in the previous step
 
       - name: Find MSI installer
         id: find_msi
