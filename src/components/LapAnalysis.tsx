@@ -1089,7 +1089,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                               onDrop={handleDrop}
                               isDragging={draggingChartId === chartId}
                               dragOverId={dragOverChartId}
-                              className={`overflow-hidden ${colSpan} ${minHeight} rounded-xl border border-border/40 bg-card/50 backdrop-blur-sm shadow-sm hover:shadow-md transition-all group`}
+                              className={`${colSpan} ${minHeight} rounded-xl border border-border/40 bg-card/50 backdrop-blur-sm shadow-sm hover:shadow-md transition-all group`}
                             >
                               <Suspense fallback={
                                 <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
