@@ -621,6 +621,100 @@ async function writeJsonArray({ fd, header, fileSizeBytes, dataStart, recordCoun
 async function writeMeta({ header, fileSizeBytes, dataStart, recordCountComputed, remainder, vars, sessionInfo, opts }) {
   if (!opts.meta) return
 
+  const weekendInfo = {}
+
+  const weekendTrackDisplayName = sessionInfo.match(/TrackDisplayName:\s*"([^"]+)"/)
+  if (weekendTrackDisplayName) weekendInfo.trackDisplayName = weekendTrackDisplayName[1]
+
+  const weekendTrackDisplayShortName = sessionInfo.match(/TrackDisplayShortName:\s*"([^"]+)"/)
+  if (weekendTrackDisplayShortName) weekendInfo.trackDisplayShortName = weekendTrackDisplayShortName[1]
+
+  const weekendTrackConfigName = sessionInfo.match(/TrackConfigName:\s*"([^"]+)"/)
+  if (weekendTrackConfigName) weekendInfo.trackConfigName = weekendTrackConfigName[1]
+
+  const weekendTrackCity = sessionInfo.match(/TrackCity:\s*"([^"]+)"/)
+  if (weekendTrackCity) weekendInfo.trackCity = weekendTrackCity[1]
+
+  const weekendTrackState = sessionInfo.match(/TrackState:\s*"([^"]+)"/)
+  if (weekendTrackState) weekendInfo.trackState = weekendTrackState[1]
+
+  const weekendTrackCountry = sessionInfo.match(/TrackCountry:\s*"([^"]+)"/)
+  if (weekendTrackCountry) weekendInfo.trackCountry = weekendTrackCountry[1]
+
+  const weekendTrackLength = sessionInfo.match(/TrackLength:\s*"([^"]+)"/)
+  if (weekendTrackLength) weekendInfo.trackLength = weekendTrackLength[1]
+
+  const weekendTrackLengthOfficial = sessionInfo.match(/TrackLengthOfficial:\s*"([^"]+)"/)
+  if (weekendTrackLengthOfficial) weekendInfo.trackLengthOfficial = weekendTrackLengthOfficial[1]
+
+  const weekendTrackNumTurns = sessionInfo.match(/TrackNumTurns:\s*(\d+)/)
+  if (weekendTrackNumTurns) weekendInfo.trackNumTurns = parseInt(weekendTrackNumTurns[1], 10)
+
+  const weekendTrackType = sessionInfo.match(/TrackType:\s*"([^"]+)"/)
+  if (weekendTrackType) weekendInfo.trackType = weekendTrackType[1]
+
+  const weekendEventType = sessionInfo.match(/EventType:\s*"([^"]+)"/)
+  if (weekendEventType) weekendInfo.sessionType = weekendEventType[1]
+
+  const weekendDate = sessionInfo.match(/^\s*Date:\s*"([^"]+)"/m)
+  if (weekendDate) weekendInfo.eventDate = weekendDate[1]
+
+  let carName = null
+  let carPath = null
+
+  const driverCarIdxMatch = sessionInfo.match(/DriverCarIdx:\s*(\d+)/)
+  const driverCarIdx = driverCarIdxMatch ? parseInt(driverCarIdxMatch[1], 10) : null
+
+  if (driverCarIdx !== null) {
+    const driverEntryRegex = new RegExp(`-\\s*CarIdx:\\s*${driverCarIdx}\\b([\\s\\S]*?)(?=\\n\\s*-\\s*CarIdx:|$)`)
+    const driverEntry = sessionInfo.match(driverEntryRegex)
+
+    if (driverEntry) {
+      const carScreenNameMatch = driverEntry[1].match(/CarScreenName:\s*"([^"]+)"/)
+      if (carScreenNameMatch) carName = carScreenNameMatch[1]
+
+      const carPathMatch = driverEntry[1].match(/CarPath:\s*"([^"]+)"/)
+      if (carPathMatch) carPath = carPathMatch[1]
+    }
+  }
+
+  if (!carName) {
+    const firstDriverEntry = sessionInfo.match(/Drivers:([\s\S]*?)-\s*CarIdx:\s*\d+/)
+    if (firstDriverEntry) {
+      const carScreenNameMatch = firstDriverEntry[1].match(/CarScreenName:\s*"([^"]+)"/)
+      if (carScreenNameMatch) carName = carScreenNameMatch[1]
+
+      const carPathMatch = firstDriverEntry[1].match(/CarPath:\s*"([^"]+)"/)
+      if (carPathMatch) carPath = carPathMatch[1]
+    }
+  }
+
+  const trackMatch = sessionInfo.match(/TrackName:\s*"([^"]+)"/)
+  const trackName = trackMatch ? trackMatch[1] : undefined
+
+  const trackConfigMatch = sessionInfo.match(/TrackConfig:\s*"([^"]+)"/)
+  const trackConfig = trackConfigMatch ? trackConfigMatch[1] : undefined
+
+  const sessionTypeMatch = sessionInfo.match(/SessionType:\s*"([^"]+)"/)
+  const sessionType = sessionTypeMatch ? sessionTypeMatch[1] : undefined
+
+  const trackDisplayNameMatch = sessionInfo.match(/TrackDisplayName:\s*"([^"]+)"/)
+  const trackDisplayName = trackDisplayNameMatch ? trackDisplayNameMatch[1] : undefined
+
+  const metadata = {
+    carName,
+    carPath,
+    trackName,
+    trackDisplayName,
+    trackConfigName: weekendInfo.trackConfigName,
+    sessionType,
+    trackConfig,
+  }
+
+  if (Object.keys(weekendInfo).length > 0) {
+    metadata.weekendInfo = weekendInfo
+  }
+
   const meta = {
     input: {
       path: opts.input,
@@ -657,6 +751,7 @@ async function writeMeta({ header, fileSizeBytes, dataStart, recordCountComputed
       desc: v.desc,
     })),
     sessionInfoYAML: sessionInfo,
+    metadata,
   }
 
   fs.writeFileSync(opts.meta, JSON.stringify(meta, null, 2), "utf8")

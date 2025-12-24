@@ -103,14 +103,17 @@ export async function readIbtHeader(blob: Blob): Promise<IbtHeader> {
   const fullHeaderBuf = await readSlice(blob, 0, header.varHeaderOffset)
   const out: IbtHeader = { ...header, headerBytes: header.varHeaderOffset }
 
+  // iRacing disk telemetry typically appends a "diskSubHeader" in the final 32 bytes of the header (total 144 bytes).
+  // We keep it optional but parse a few useful fields if present.
   if (fullHeaderBuf.byteLength >= 144) {
-    const dh = new DataView(fullHeaderBuf)
+    const dvh = new DataView(fullHeaderBuf)
     out.diskSubHeader = {
-      sessionStartDate: dh.getInt32(112, true),
-      sessionStartTime: dh.getFloat64(120, true),
-      sessionEndTime: dh.getFloat64(128, true),
-      lapCount: dh.getInt32(136, true),
-      recordCount: dh.getInt32(140, true),
+      // Seconds since Unix epoch (observed in sample files)
+      sessionStartDate: dvh.getInt32(112, true),
+      sessionStartTime: dvh.getFloat64(120, true),
+      sessionEndTime: dvh.getFloat64(128, true),
+      lapCount: dvh.getInt32(136, true),
+      recordCount: dvh.getInt32(140, true),
     }
   }
 
@@ -193,7 +196,7 @@ function makeVarReaders(vars: IbtVar[]): VarReader[] {
         case 2:
           return dv.getInt32(p, true)
         case 3:
-          return dv.getUint32(p, true)
+          return dv.getUint32(p)
         case 4:
           return dv.getFloat32(p, true)
         case 5:
@@ -223,7 +226,7 @@ function makeVarReaders(vars: IbtVar[]): VarReader[] {
             out[i] = dv.getInt32(pp, true)
             break
           case 3:
-            out[i] = dv.getUint32(pp, true)
+            out[i] = dv.getUint32(pp)
             break
           case 4:
             out[i] = dv.getFloat32(pp, true)
@@ -239,10 +242,7 @@ function makeVarReaders(vars: IbtVar[]): VarReader[] {
     }
 
     return {
-      name: v.name,
-      type: v.type,
-      offset: v.offset,
-      count: v.count,
+      ...v,
       read: (dv: DataView, recordBase: number, recordBytes: Uint8Array) =>
         v.count === 1 ? readScalar(dv, recordBase) : readArray(dv, recordBase, recordBytes),
     }
@@ -309,42 +309,74 @@ export async function readIbtSamples(
   return rows
 }
 
-export interface IbtSessionMetadata {
+export interface IbtWeekendInfo {
   trackName?: string
+  trackDisplayName?: string
+  trackDisplayShortName?: string
+  trackConfigName?: string
+  trackCity?: string
+  trackState?: string
+  trackCountry?: string
+  trackLength?: string
+  trackLengthOfficial?: string
+  trackNumTurns?: number
+  trackType?: string
+  sessionType?: string
+  eventDate?: string
+}
+
+export interface IbtSessionMetadata {
   carName?: string
+  carPath?: string
+  trackName?: string
+  trackDisplayName?: string
+  trackConfigName?: string
   sessionDate?: string
   sessionTime?: string
   sessionType?: string
   trackConfig?: string
   lapCount?: number
   recordCount?: number
+  weekendInfo?: IbtWeekendInfo
+  driverName?: string
+  driverIRating?: number
+  driverFlairName?: string
 }
 
 export async function readIbtMetadata(blob: Blob): Promise<IbtSessionMetadata> {
   const header = await readIbtHeader(blob)
   const yaml = await readIbtSessionInfoYaml(blob, header)
-  
+
+  // Helper function to extract YAML values (handles both quoted and unquoted)
+  const extractYamlValue = (yaml: string, key: string): string | null => {
+    const quotedMatch = yaml.match(new RegExp(`${key}:\\s*"([^"]+)"`))
+    if (quotedMatch) return quotedMatch[1]
+    const unquotedMatch = yaml.match(new RegExp(`${key}:\\s*([^\\n]+)`))
+    if (unquotedMatch) return unquotedMatch[1].trim()
+    return null
+  }
+
   const metadata: IbtSessionMetadata = {
     lapCount: header.diskSubHeader?.lapCount,
     recordCount: header.diskSubHeader?.recordCount,
   }
 
-  const trackMatch = yaml.match(/TrackName:\s*"([^"]+)"/)
-  if (trackMatch) metadata.trackName = trackMatch[1]
+  const trackName = extractYamlValue(yaml, "TrackName")
+  if (trackName) metadata.trackName = trackName
 
-  const trackConfigMatch = yaml.match(/TrackConfig:\s*"([^"]+)"/)
-  if (trackConfigMatch) metadata.trackConfig = trackConfigMatch[1]
+  const trackConfig = extractYamlValue(yaml, "TrackConfig")
+  if (trackConfig) metadata.trackConfig = trackConfig
 
-  const carMatch = yaml.match(/CarSetup:\s*\n\s*Car:\s*"([^"]+)"/)
+  const carMatch = yaml.match(/CarSetup:\s*\n\s*Car:\s*(?:"([^"]+)"|([^\n]+))/)
   if (carMatch) {
-    metadata.carName = carMatch[1]
+    metadata.carName = (carMatch[1] || carMatch[2]?.trim()) ?? null
   } else {
-    const carMatch2 = yaml.match(/CarName:\s*"([^"]+)"/)
-    if (carMatch2) metadata.carName = carMatch2[1]
+    const carName = extractYamlValue(yaml, "CarName")
+    if (carName) metadata.carName = carName
   }
 
-  const sessionTypeMatch = yaml.match(/SessionType:\s*"([^"]+)"/)
-  if (sessionTypeMatch) metadata.sessionType = sessionTypeMatch[1]
+  const sessionType = extractYamlValue(yaml, "SessionType")
+  if (sessionType) metadata.sessionType = sessionType
 
   if (header.diskSubHeader) {
     const date = new Date(header.diskSubHeader.sessionStartDate * 1000)
@@ -352,7 +384,89 @@ export async function readIbtMetadata(blob: Blob): Promise<IbtSessionMetadata> {
     metadata.sessionTime = date.toLocaleTimeString()
   }
 
+  const weekendInfo: IbtWeekendInfo = {}
+
+  const weekendTrackDisplayName = extractYamlValue(yaml, "TrackDisplayName")
+  if (weekendTrackDisplayName) {
+    weekendInfo.trackDisplayName = weekendTrackDisplayName
+    metadata.trackDisplayName = weekendTrackDisplayName
+  }
+
+  const weekendTrackDisplayShortName = extractYamlValue(yaml, "TrackDisplayShortName")
+  if (weekendTrackDisplayShortName) weekendInfo.trackDisplayShortName = weekendTrackDisplayShortName
+
+  const weekendTrackConfigName = extractYamlValue(yaml, "TrackConfigName")
+  if (weekendTrackConfigName) {
+    weekendInfo.trackConfigName = weekendTrackConfigName
+    metadata.trackConfigName = weekendTrackConfigName
+  }
+
+  const weekendTrackCity = extractYamlValue(yaml, "TrackCity")
+  if (weekendTrackCity) weekendInfo.trackCity = weekendTrackCity
+
+  const weekendTrackState = extractYamlValue(yaml, "TrackState")
+  if (weekendTrackState) weekendInfo.trackState = weekendTrackState
+
+  const weekendTrackCountry = extractYamlValue(yaml, "TrackCountry")
+  if (weekendTrackCountry) weekendInfo.trackCountry = weekendTrackCountry
+
+  const weekendTrackLength = extractYamlValue(yaml, "TrackLength")
+  if (weekendTrackLength) weekendInfo.trackLength = weekendTrackLength
+
+  const weekendTrackLengthOfficial = extractYamlValue(yaml, "TrackLengthOfficial")
+  if (weekendTrackLengthOfficial) weekendInfo.trackLengthOfficial = weekendTrackLengthOfficial
+
+  const weekendTrackNumTurns = yaml.match(/TrackNumTurns:\s*(\d+)/)
+  if (weekendTrackNumTurns) weekendInfo.trackNumTurns = parseInt(weekendTrackNumTurns[1], 10)
+
+  const weekendTrackType = extractYamlValue(yaml, "TrackType")
+  if (weekendTrackType) weekendInfo.trackType = weekendTrackType
+
+  const weekendEventType = extractYamlValue(yaml, "EventType")
+  if (weekendEventType) weekendInfo.sessionType = weekendEventType
+
+  const weekendDate = extractYamlValue(yaml, "Date")
+  if (weekendDate) weekendInfo.eventDate = weekendDate
+
+  let carName = null
+  let carPath = null
+
+  const driverCarIdxMatch = yaml.match(/DriverCarIdx:\s*(\d+)/)
+  const driverCarIdx = driverCarIdxMatch ? parseInt(driverCarIdxMatch[1], 10) : null
+
+  if (driverCarIdx !== null) {
+    const driverEntryRegex = new RegExp(`-\\s*CarIdx:\\s*${driverCarIdx}\\b([\\s\\S]*?)(?=\\n\\s*-\\s*CarIdx:|$)`)
+    const driverEntry = yaml.match(driverEntryRegex)
+
+    if (driverEntry) {
+      carName = extractYamlValue(driverEntry[1], "CarScreenName")
+      carPath = extractYamlValue(driverEntry[1], "CarPath")
+      
+      // Extract driver information
+      const userName = extractYamlValue(driverEntry[1], "UserName")
+      const iRating = driverEntry[1].match(/IRating:\s*(\d+)/)
+      const flairName = extractYamlValue(driverEntry[1], "FlairName")
+      
+      if (userName) metadata.driverName = userName
+      if (iRating) metadata.driverIRating = parseInt(iRating[1], 10)
+      if (flairName && flairName !== "-none-") metadata.driverFlairName = flairName
+    }
+  }
+
+  if (!carName) {
+    const firstDriverEntry = yaml.match(/Drivers:([\s\S]*?)-\s*CarIdx:\s*\d+/)
+    if (firstDriverEntry) {
+      carName = extractYamlValue(firstDriverEntry[1], "CarScreenName")
+      carPath = extractYamlValue(firstDriverEntry[1], "CarPath")
+    }
+  }
+
+  if (carName) metadata.carName = carName
+  if (carPath) metadata.carPath = carPath
+
+  if (Object.keys(weekendInfo).length > 0) {
+    metadata.weekendInfo = weekendInfo
+  }
+
   return metadata
 }
-
-

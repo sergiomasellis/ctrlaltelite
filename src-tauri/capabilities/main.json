@@ -6,8 +6,10 @@
   "permissions": [
     "fs:allow-read-dir",
     "fs:allow-read-file",
+    "fs:allow-write-file",
     "fs:scope-document",
     "fs:scope-document-recursive",
+    "fs:scope-applocaldata",
     "core:path:default",
     "core:window:default",
     "core:window:allow-close",
@@ -18,4 +20,3 @@
     "core:event:allow-listen"
   ]
 }
-
