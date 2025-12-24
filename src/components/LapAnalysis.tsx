@@ -6,6 +6,7 @@ import {
   Map,
   AlertCircle,
   ArrowLeft,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -33,7 +34,7 @@ import { DraggableChart } from "@/components/telemetry/DraggableChart"
 
 // Lazy load chart component for better initial load
 const SyncedChart = lazy(() => import("@/components/telemetry/SyncedChart").then(module => ({ default: module.SyncedChart })))
-const TrackMap = lazy(() => import("@/components/track/TrackMap").then(module => ({ default: module.TrackMap })))
+const TrackMap = lazy(() => import("@/components/track/TrackMap3D").then(module => ({ default: module.TrackMap3D })))
 
 // Chart type IDs
 const CHART_IDS = {
@@ -89,12 +90,12 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
   const [ibtProgress, setIbtProgress] = useState<{ processedRecords: number; totalRecords: number } | null>(null)
   const [ibtError, setIbtError] = useState<string | null>(null)
   const [sectorBoundaries, setSectorBoundaries] = useState<SectorBoundary[]>([])
-  
+
   // Chart order state
   const [chartOrder, setChartOrder] = useState<ChartId[]>(DEFAULT_CHART_ORDER)
   const [draggingChartId, setDraggingChartId] = useState<ChartId | null>(null)
   const [dragOverChartId, setDragOverChartId] = useState<ChartId | null>(null)
-  
+
   // Zoom state (shared across all charts)
   const [zoomXMin, setZoomXMin] = useState<number | null>(null)
   const [zoomXMax, setZoomXMax] = useState<number | null>(null)
@@ -140,9 +141,9 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
       const newOrder = [...prev]
       const draggedIndex = newOrder.indexOf(dragged)
       const targetIndex = newOrder.indexOf(target)
-      
+
       if (draggedIndex === -1 || targetIndex === -1) return prev
-      
+
       newOrder.splice(draggedIndex, 1)
       newOrder.splice(targetIndex, 0, dragged)
       return newOrder
@@ -393,7 +394,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
 
         // Find the maximum distance across all laps (approximates track length)
         const maxDist = Math.max(...allLaps.map((lap) => lapDataByLap[lap]!.distanceKm))
-        
+
         // Filter to only completed laps:
         // - Must be at least 90% of the maximum distance (indicates full lap)
         // - Must have a valid lap time (> 0)
@@ -550,7 +551,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
     const series: ChartSeries[] = []
     const tireColors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b"] // Red, Blue, Green, Orange for LF, RF, LR, RR
     const tireLabels = ["LF", "RF", "LR", "RR"]
-    
+
     for (const lap of selectedLaps) {
       for (let i = 0; i < 4; i++) {
         const tireKey = ["LF", "RF", "LR", "RR"][i]!
@@ -568,7 +569,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
     const series: ChartSeries[] = []
     const tireColors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b"]
     const tireLabels = ["LF", "RF", "LR", "RR"]
-    
+
     for (const lap of selectedLaps) {
       for (let i = 0; i < 4; i++) {
         const tireKey = ["LF", "RF", "LR", "RR"][i]!
@@ -586,7 +587,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
     const series: ChartSeries[] = []
     const tireColors = ["#ef4444", "#3b82f6", "#10b981", "#f59e0b"]
     const tireLabels = ["LF", "RF", "LR", "RR"]
-    
+
     for (const lap of selectedLaps) {
       for (let i = 0; i < 4; i++) {
         const tireKey = ["LF", "RF", "LR", "RR"][i]!
@@ -608,17 +609,17 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
   const absZones = useMemo(() => {
     if (!telemetryData || telemetryData.length === 0) return []
     const zones: Array<{ x1: number; x2: number; color?: string }> = []
-    
+
     for (const lap of selectedLaps) {
       const absKey = `brakeABSactive_${lap}`
       let zoneStart: number | null = null
-      
+
       for (let i = 0; i < telemetryData.length; i++) {
         const point = telemetryData[i]
         if (!point || typeof point.distance !== "number") continue
-        
+
         const absActive = point[absKey] === true
-        
+
         if (absActive && zoneStart === null) {
           zoneStart = point.distance
         } else if (!absActive && zoneStart !== null) {
@@ -630,7 +631,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
           zoneStart = null
         }
       }
-      
+
       if (zoneStart !== null && telemetryData.length > 0) {
         const lastPoint = telemetryData[telemetryData.length - 1]
         if (lastPoint && typeof lastPoint.distance === "number") {
@@ -642,7 +643,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         }
       }
     }
-    
+
     return zones
   }, [telemetryData, selectedLaps, lapColors])
 
@@ -821,7 +822,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
     const throttles = refData.byDist.map(p => p.throttlePct).filter((v): v is number => v != null)
     const brakes = refData.byDist.map(p => p.brakePct).filter((v): v is number => v != null)
     const rpms = refData.byDist.map(p => p.rpm).filter((v): v is number => v != null)
-    
+
     // Tire data
     const tireTempsLF = refData.byDist.map(p => p.tireTempLF).filter((v): v is number => v != null)
     const tireTempsRF = refData.byDist.map(p => p.tireTempRF).filter((v): v is number => v != null)
@@ -860,307 +861,341 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
 
   return (
     <CursorStoreContext.Provider value={cursorStore}>
-    <div className="flex h-full flex-col bg-background text-foreground">
-      {/* Top toolbar */}
-      <div className="flex h-9 items-center justify-between border-b border-border px-4 bg-muted/20">
-        <div className="flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            onClick={onBackToStart}
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Back to Overview
-          </Button>
-          {ibtLapDataByLap && (
-            <>
-              <div className="h-4 w-px bg-border" />
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Mode:</span>
-                <Select defaultValue="driving-style">
-                  <SelectTrigger className="h-6 w-36 text-xs border-border/50">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="driving-style">Driving Style</SelectItem>
-                    <SelectItem value="performance">Performance</SelectItem>
-                    <SelectItem value="consistency">Consistency</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
-          {ibtLapDataByLap && (
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-              <span className="tabular-nums">{ibtLaps.length}</span>
-              <span className="uppercase tracking-wide">laps</span>
-              <span className="text-border">·</span>
-              <span className="tabular-nums">{selectedLaps.length}</span>
-              <span className="uppercase tracking-wide">selected</span>
-            </div>
-          )}
-          <Button variant="ghost" size="icon-sm" className="h-6 w-6 text-muted-foreground hover:text-foreground">
-            <Settings className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
+      <div className="relative flex h-full flex-col bg-background text-foreground overflow-hidden">
+        {/* Global Ambience */}
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--primary-color),_transparent_50%)] opacity-20" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,_rgba(230,57,70,0.1),_transparent_50%)]" />
 
-      {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar - data source and lap selection */}
-        <aside className="flex w-64 flex-col border-r border-border overflow-y-auto bg-muted/5">
-          <TelemetrySourceInput
-            onFileSelect={(file) => loadIbt(file, file.name)}
-            onLoadSample={loadSample}
-            onBackToStart={onBackToStart}
-            loading={ibtLoading}
-            sourceLabel={ibtSourceLabel}
-            progress={ibtProgress}
-            error={ibtError}
-          />
+        {/* Top toolbar */}
+        <header className="z-20 flex h-14 flex-shrink-0 items-center justify-between border-b border-border/40 bg-background/60 backdrop-blur-xl px-4 shadow-sm">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="group gap-2 text-muted-foreground hover:text-foreground hover:bg-primary/10 transition-all ml-1"
+              onClick={onBackToStart}
+            >
+              <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-1" />
+              <span className="font-medium">Overview</span>
+            </Button>
 
-          {ibtLapDataByLap && (
-            <>
-              <LapSelector
-                laps={ibtLaps}
-                selectedLaps={selectedLaps}
-                lapColors={lapColors}
-                lapDataByLap={ibtLapDataByLap}
-                onToggleLap={toggleLap}
-                onClearSelection={clearSelectedLaps}
-              />
-
-              <SectorTimesTable
-                selectedLaps={selectedLaps}
-                lapDataByLap={ibtLapDataByLap}
-                lapColors={lapColors}
-                sectorBoundaries={sectorBoundaries}
-              />
-            </>
-          )}
-        </aside>
-
-        {/* Center content */}
-        <div className="flex flex-1 flex-col overflow-hidden">
-          {/* Summary stats bar */}
-          {refLapStats && (
-            <LapStatsBar
-              lapTime={refLapStats.lapTime}
-              avgSpeed={refLapStats.avgSpeed}
-              maxSpeed={refLapStats.maxSpeed}
-              avgThrottle={refLapStats.avgThrottle}
-              avgBrake={refLapStats.avgBrake}
-              maxRpm={refLapStats.maxRpm}
-              hasZoom={zoomXMin != null || zoomXMax != null}
-              onResetZoom={handleResetZoom}
-            />
-          )}
-
-          {/* Main content area - optimized 2 column layout */}
-          <div className="flex flex-1 overflow-hidden">
-            {/* Left: Track map and legend */}
-            <div className="flex flex-col w-72 border-r border-border bg-muted/5">
-              {/* Track map */}
-              <div className="relative flex-shrink-0 h-56 border-b border-border p-3 bg-background">
-                <div className="absolute left-3 top-3 z-10">
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-background/90 backdrop-blur-sm border border-border/50 shadow-sm">
-                    <Map className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Track</span>
+            {ibtLapDataByLap && (
+              <>
+                <div className="h-4 w-px bg-border/60" />
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-2 py-1">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Mode</span>
+                    <Select defaultValue="driving-style">
+                      <SelectTrigger className="h-7 w-32 border-0 bg-transparent p-0 text-xs font-medium focus:ring-0 shadow-none data-[placeholder]:text-foreground">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="driving-style">Driving Style</SelectItem>
+                        <SelectItem value="performance">Performance</SelectItem>
+                        <SelectItem value="consistency">Consistency</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
-                <div className="w-full h-full">
-                  {ibtLapDataByLap ? (
-                    <Suspense fallback={
-                      <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground bg-muted/20 rounded-md">
-                        Loading map...
-                      </div>
-                    }>
-                      <TrackMap
-                        lapDataByLap={ibtLapDataByLap}
-                        selectedLaps={selectedLaps}
-                        lapColors={lapColors}
-                        zoomXMin={zoomXMin}
-                        zoomXMax={zoomXMax}
-                      />
-                    </Suspense>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-muted/20 rounded-md border border-border/50">
-                      <div className="text-center">
-                        <Map className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
-                        <p className="text-xs font-medium text-muted-foreground">Track Map</p>
-                        <p className="text-[10px] text-muted-foreground/60 mt-0.5">Load data to view</p>
-                      </div>
-                    </div>
-                  )}
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-4">
+            {ibtLapDataByLap && (
+              <div className="flex items-center gap-4 text-xs font-medium text-muted-foreground bg-muted/20 px-3 py-1.5 rounded-full border border-border/40">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                  <span className="tabular-nums text-foreground">{ibtLaps.length}</span>
+                  <span className="opacity-70">Laps</span>
+                </div>
+                <div className="h-3 w-px bg-border/60" />
+                <div className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="tabular-nums text-foreground">{selectedLaps.length}</span>
+                  <span className="opacity-70">Selected</span>
                 </div>
               </div>
+            )}
+            <Button variant="ghost" size="icon-sm" className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-full">
+              <Settings className="h-4 w-4" />
+            </Button>
+          </div>
+        </header>
 
-              {/* Legend */}
+        {/* Main content */}
+        <div className="flex flex-1 overflow-hidden relative z-10">
+          {/* Left sidebar - data source and lap selection */}
+          <aside className="group grid w-[280px] flex-col border-r border-border/40 bg-background/40 backdrop-blur-md transition-all duration-300">
+            <div className="flex flex-col h-full overflow-y-auto p-2 gap-2">
+              <div className="rounded-xl border border-border/40 bg-card/30 p-1 shadow-sm">
+                <TelemetrySourceInput
+                  onFileSelect={(file) => loadIbt(file, file.name)}
+                  onLoadSample={loadSample}
+                  onBackToStart={onBackToStart}
+                  loading={ibtLoading}
+                  sourceLabel={ibtSourceLabel}
+                  progress={ibtProgress}
+                  error={ibtError}
+                />
+              </div>
+
               {ibtLapDataByLap && (
-                <div className="flex-1 overflow-y-auto">
-                  <LapComparisonLegend
-                    selectedLaps={selectedLaps}
-                    lapDataByLap={ibtLapDataByLap}
-                    lapColors={lapColors}
-                    sectorBoundaries={sectorBoundaries}
-                  />
+                <div className="flex flex-1 flex-col gap-2 min-h-0">
+                  <div className="flex-shrink-0 rounded-xl border border-border/40 bg-card/30 overflow-hidden shadow-sm hover:shadow-md transition-all">
+                    <LapSelector
+                      laps={ibtLaps}
+                      selectedLaps={selectedLaps}
+                      lapColors={lapColors}
+                      lapDataByLap={ibtLapDataByLap}
+                      onToggleLap={toggleLap}
+                      onClearSelection={clearSelectedLaps}
+                    />
+                  </div>
+
+                  <div className="flex-1 rounded-xl border border-border/40 bg-card/30 overflow-hidden shadow-sm hover:shadow-md transition-all">
+                    <SectorTimesTable
+                      selectedLaps={selectedLaps}
+                      lapDataByLap={ibtLapDataByLap}
+                      lapColors={lapColors}
+                      sectorBoundaries={sectorBoundaries}
+                    />
+                  </div>
                 </div>
               )}
             </div>
+          </aside>
 
-            {/* Right: Charts area */}
-            <div className="flex flex-1 flex-col overflow-hidden bg-background">
-              {ibtLapDataByLap ? (
-                <>
-                  {/* Charts container with scroll if needed */}
-                  <div className="flex-1 flex flex-col overflow-y-auto">
-                    {/* Draggable charts grid */}
-                    <div
-                      className="grid grid-cols-2 auto-rows-fr gap-3 p-3 flex-1"
-                      onDragLeave={(e) => {
-                        const relatedTarget = e.relatedTarget as HTMLElement
-                        if (!e.currentTarget.contains(relatedTarget)) {
-                          setDragOverChartId(null)
-                        }
-                      }}
-                    >
-                      {chartOrder.map((chartId) => {
-                        const config = chartConfigs[chartId]
-                        const isSpeedChart = chartId === CHART_IDS.SPEED
-                        const colSpan = isSpeedChart ? "col-span-2" : "col-span-1"
-                        const minHeight = isSpeedChart ? "min-h-[200px]" : "min-h-[144px]"
+          {/* Center content */}
+          <div className="flex flex-1 flex-col overflow-hidden bg-background/20 backdrop-blur-sm">
+            {/* Summary stats bar */}
+            {refLapStats && (
+              <div className="border-b border-border/40 bg-background/50 backdrop-blur-md shadow-sm z-10">
+                <LapStatsBar
+                  lapTime={refLapStats.lapTime}
+                  avgSpeed={refLapStats.avgSpeed}
+                  maxSpeed={refLapStats.maxSpeed}
+                  avgThrottle={refLapStats.avgThrottle}
+                  avgBrake={refLapStats.avgBrake}
+                  maxRpm={refLapStats.maxRpm}
+                  hasZoom={zoomXMin != null || zoomXMax != null}
+                  onResetZoom={handleResetZoom}
+                />
+              </div>
+            )}
 
-                        return (
-                          <DraggableChart
-                            key={chartId}
-                            id={chartId}
-                            title={config.title}
-                            unit={config.unit}
-                            onDragStart={handleDragStart}
-                            onDragEnd={handleDragEnd}
-                            onDragOver={handleDragOver}
-                            onDrop={handleDrop}
-                            isDragging={draggingChartId === chartId}
-                            dragOverId={dragOverChartId}
-                            className={`overflow-hidden ${colSpan} ${minHeight} border border-border/50 rounded-md bg-card shadow-sm`}
-                          >
-                            <Suspense fallback={
-                              <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground bg-muted/10">
-                                Loading...
-                              </div>
-                            }>
-                              {renderChartContent(chartId)}
-                            </Suspense>
-                          </DraggableChart>
-                        )
-                      })}
-                    </div>
-
-                    {/* Sector indicators at bottom */}
-                    <div className="px-3 pb-3">
-                      <SectorIndicators 
-                        sectorBoundaries={sectorBoundaries}
-                        selectedLaps={selectedLaps}
-                        lapDataByLap={ibtLapDataByLap}
-                        onSectorClick={handleSectorClick}
-                      />
+            {/* Main content area - optimized 2 column layout */}
+            <div className="flex flex-1 overflow-hidden">
+              {/* Left: Track map and legend */}
+              <div className="flex flex-col w-[300px] border-r border-border/40 bg-background/30 backdrop-blur-sm transition-all duration-300">
+                {/* Track map */}
+                <div className="relative flex-shrink-0 h-64 border-b border-border/40 bg-gradient-to-b from-background/50 to-background/20">
+                  <div className="absolute left-4 top-4 z-10">
+                    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-background/80 backdrop-blur-md border border-border/40 shadow-sm">
+                      <Map className="h-3.5 w-3.5 text-primary" />
+                      <span className="text-[10px] font-bold text-foreground/80 uppercase tracking-widest">Track Map</span>
                     </div>
                   </div>
-                </>
-              ) : (
-                /* Empty state - when no data loaded */
-                <div className="flex-1 flex items-center justify-center bg-muted/10">
-                  <div className="text-center max-w-lg px-6">
-                    <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-muted/50 border border-border/50 mb-6">
-                      <Upload className="h-10 w-10 text-muted-foreground/60" />
-                    </div>
-                    <h3 className="text-xl font-semibold mb-2">Load Telemetry Data</h3>
-                    <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                      Upload an .ibt file to analyze lap times, compare performance, and visualize telemetry data across multiple laps.
-                    </p>
-                    <div className="flex items-center justify-center gap-3">
-                      <Button 
-                        onClick={loadSample} 
-                        disabled={ibtLoading} 
-                        className="gap-2"
-                        size="lg"
-                      >
-                        <FileText className="h-4 w-4" />
-                        Load Sample
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className="gap-2"
-                        size="lg"
-                        onClick={() => document.getElementById('ibt-file-input')?.click()}
-                      >
-                        <Upload className="h-4 w-4" />
-                        Upload .ibt File
-                      </Button>
-                      <input
-                        id="ibt-file-input"
-                        type="file"
-                        accept=".ibt"
-                        className="hidden"
-                        disabled={ibtLoading}
-                        onChange={(e) => {
-                          const f = e.currentTarget.files?.[0]
-                          if (!f) return
-                          loadIbt(f, f.name)
-                        }}
-                      />
-                    </div>
-                    {ibtLoading && (
-                      <div className="mt-6">
-                        <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                          <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                          <span>Loading telemetry data...</span>
+                  <div className="w-full h-full p-2">
+                    {ibtLapDataByLap ? (
+                      <Suspense fallback={
+                        <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
+                          <div className="h-5 w-5 border-2 border-primary/50 border-t-transparent rounded-full animate-spin mr-2" />
+                          Loading map...
                         </div>
-                        {ibtProgress && (
-                          <div className="mt-2 text-xs text-muted-foreground">
-                            {ibtProgress.processedRecords.toLocaleString()} / {ibtProgress.totalRecords.toLocaleString()} records
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {ibtError && (
-                      <div className="mt-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 max-w-md mx-auto">
-                        <div className="flex items-start gap-3 text-sm text-destructive">
-                          <AlertCircle className="h-5 w-5 flex-shrink-0 mt-0.5" />
-                          <div className="text-left">
-                            <div className="font-medium mb-1">Error loading file</div>
-                            <div className="text-xs text-destructive/80">{ibtError}</div>
-                          </div>
+                      }>
+                        <TrackMap
+                          lapDataByLap={ibtLapDataByLap}
+                          selectedLaps={selectedLaps}
+                          lapColors={lapColors}
+                          zoomXMin={zoomXMin}
+                          zoomXMax={zoomXMax}
+                        />
+                      </Suspense>
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <div className="text-center md:opacity-50">
+                          <Map className="h-10 w-10 mx-auto mb-2 text-muted-foreground/30" />
+                          <p className="text-xs text-muted-foreground/50 uppercase tracking-widest">No Data</p>
                         </div>
                       </div>
                     )}
                   </div>
                 </div>
-              )}
+
+                {/* Legend */}
+                {ibtLapDataByLap && (
+                  <div className="flex-1 overflow-y-auto p-2">
+                    <div className="h-full rounded-xl border border-border/30 bg-card/20 p-1">
+                      <LapComparisonLegend
+                        selectedLaps={selectedLaps}
+                        lapDataByLap={ibtLapDataByLap}
+                        lapColors={lapColors}
+                        sectorBoundaries={sectorBoundaries}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Charts area */}
+              <div className="flex flex-1 flex-col overflow-hidden bg-background/10">
+                {ibtLapDataByLap ? (
+                  <>
+                    {/* Charts container with scroll if needed */}
+                    <div className="flex-1 flex flex-col overflow-y-auto scrollbar-thin scrollbar-thumb-border/40">
+                      {/* Draggable charts grid */}
+                      <div
+                        className="grid grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 auto-rows-min gap-4 p-4 flex-1 pb-20"
+                        onDragLeave={(e) => {
+                          const relatedTarget = e.relatedTarget as HTMLElement
+                          if (!e.currentTarget.contains(relatedTarget)) {
+                            setDragOverChartId(null)
+                          }
+                        }}
+                      >
+                        {chartOrder.map((chartId) => {
+                          const config = chartConfigs[chartId]
+                          const isSpeedChart = chartId === CHART_IDS.SPEED
+                          const colSpan = isSpeedChart ? "col-span-2" : "col-span-1"
+                          const minHeight = isSpeedChart ? "min-h-[220px]" : "min-h-[160px]"
+
+                          return (
+                            <DraggableChart
+                              key={chartId}
+                              id={chartId}
+                              title={config.title}
+                              unit={config.unit}
+                              onDragStart={handleDragStart}
+                              onDragEnd={handleDragEnd}
+                              onDragOver={handleDragOver}
+                              onDrop={handleDrop}
+                              isDragging={draggingChartId === chartId}
+                              dragOverId={dragOverChartId}
+                              className={`overflow-hidden ${colSpan} ${minHeight} rounded-xl border border-border/40 bg-card/50 backdrop-blur-sm shadow-sm hover:shadow-md transition-all group`}
+                            >
+                              <Suspense fallback={
+                                <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
+                                  <span className="animate-pulse">Loading...</span>
+                                </div>
+                              }>
+                                {renderChartContent(chartId)}
+                              </Suspense>
+                            </DraggableChart>
+                          )
+                        })}
+                      </div>
+
+                      {/* Sector indicators at bottom */}
+                      <div className="sticky bottom-0 bg-background/80 backdrop-blur-xl border-t border-border/40 p-3 z-10 mx-4 mb-4 rounded-xl border shadow-lg">
+                        <SectorIndicators
+                          sectorBoundaries={sectorBoundaries}
+                          selectedLaps={selectedLaps}
+                          lapDataByLap={ibtLapDataByLap}
+                          onSectorClick={handleSectorClick}
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* Empty state - when no data loaded */
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="relative overflow-hidden rounded-2xl border border-border/40 bg-card/30 backdrop-blur-xl p-10 text-center shadow-2xl max-w-lg w-full">
+                      <div className="space-y-6">
+                        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 shadow-inner">
+                          <Upload className="h-10 w-10 text-primary/60" />
+                        </div>
+                        <div className="space-y-2">
+                          <h3 className="text-2xl font-bold tracking-tight">Telemetry Analysis</h3>
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            Upload an iRacing .ibt file to visualize lap times, compare vehicle inputs, and analyze cornering performance in detail.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
+                          <Button
+                            onClick={loadSample}
+                            disabled={ibtLoading}
+                            variant="secondary"
+                            className="w-full sm:w-auto gap-2 h-11"
+                          >
+                            <FileText className="h-4 w-4" />
+                            Load Sample Data
+                          </Button>
+                          <span className="text-xs text-muted-foreground font-medium uppercase tracking-widest">OR</span>
+                          <Button
+                            className="w-full sm:w-auto gap-2 h-11 shadow-lg shadow-primary/20"
+                            onClick={() => document.getElementById('ibt-file-input')?.click()}
+                            disabled={ibtLoading}
+                          >
+                            <Upload className="h-4 w-4" />
+                            Upload .ibt File
+                          </Button>
+                        </div>
+
+                        <input
+                          id="ibt-file-input"
+                          type="file"
+                          accept=".ibt"
+                          className="hidden"
+                          disabled={ibtLoading}
+                          onChange={(e) => {
+                            const f = e.currentTarget.files?.[0]
+                            if (!f) return
+                            loadIbt(f, f.name)
+                          }}
+                        />
+                      </div>
+
+                      {ibtLoading && (
+                        <div className="mt-8 rounded-lg bg-background/40 p-4 backdrop-blur-sm border border-border/30">
+                          <div className="flex items-center justify-center gap-3 text-sm font-medium">
+                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            <span>Processing telemetry...</span>
+                          </div>
+                          {ibtProgress && (
+                            <div className="mt-2 text-xs text-muted-foreground font-mono">
+                              {Math.round((ibtProgress.processedRecords / ibtProgress.totalRecords) * 100)}% complete
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {ibtError && (
+                        <div className="mt-6 p-4 rounded-xl bg-destructive/5 border border-destructive/20 text-left animate-in fade-in slide-in-from-bottom-2">
+                          <div className="flex items-start gap-3">
+                            <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-sm font-semibold text-destructive">Unable to load file</p>
+                              <p className="text-xs text-destructive/80 mt-1">{ibtError}</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Footer */}
-      <footer className="flex h-7 items-center justify-between border-t border-border px-4 bg-muted/20 text-[10px] text-muted-foreground">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">Ctrl Alt Elite</span>
-        </div>
-        <div className="flex-1" />
-        <div className="flex items-center gap-2">
-          {ibtSourceLabel && (
-            <>
-              <span className="text-muted-foreground/60">Source:</span>
-              <span className="font-mono text-[9px]">{ibtSourceLabel}</span>
-            </>
-          )}
-        </div>
-      </footer>
-    </div>
+        {/* Footer */}
+        <footer className="z-20 flex h-8 items-center justify-between border-t border-border/40 bg-background/60 backdrop-blur-xl px-4 text-[10px] text-muted-foreground/80 font-medium">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-foreground/80 tracking-wide">CAE</span>
+            <span className="hidden sm:inline">Telemetry Engine v1.0</span>
+          </div>
+          <div className="flex items-center gap-4">
+            {ibtSourceLabel && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30 border border-border/20">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/50" />
+                <span className="font-mono opacity-80">{ibtSourceLabel}</span>
+              </div>
+            )}
+          </div>
+        </footer>
+      </div>
     </CursorStoreContext.Provider>
   )
 }
