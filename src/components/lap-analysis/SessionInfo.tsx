@@ -61,19 +61,34 @@ export function SessionInfo({
   const formatLocation = () => {
     if (!weekendInfo) return null
     const parts: string[] = []
-    if (weekendInfo.trackCity) parts.push(weekendInfo.trackCity)
-    if (weekendInfo.trackState) parts.push(weekendInfo.trackState)
-    if (weekendInfo.trackCountry && weekendInfo.trackCountry !== "USA") parts.push(weekendInfo.trackCountry)
+    // Remove location field prefixes if present (case-insensitive, handles variations)
+    if (weekendInfo.trackCity) {
+      const cleanedCity = weekendInfo.trackCity.replace(/^TrackCity:\s*/i, "").trim()
+      if (cleanedCity) parts.push(cleanedCity)
+    }
+    if (weekendInfo.trackState) {
+      const cleanedState = weekendInfo.trackState.replace(/^TrackState:\s*/i, "").trim()
+      if (cleanedState) parts.push(cleanedState)
+    }
+    if (weekendInfo.trackCountry) {
+      const cleanedCountry = weekendInfo.trackCountry.replace(/^TrackCountry:\s*/i, "").trim()
+      if (cleanedCountry && cleanedCountry !== "USA") parts.push(cleanedCountry)
+    }
     return parts.length > 0 ? parts.join(", ") : null
   }
 
   // Format track display name
   const formatTrackName = () => {
     if (!weekendInfo) return null
-    if (weekendInfo.trackDisplayName && weekendInfo.trackConfigName) {
-      return `${weekendInfo.trackDisplayName} - ${weekendInfo.trackConfigName}`
+    let trackConfigName = weekendInfo.trackConfigName
+    // Remove "TrackCity: " prefix if present (case-insensitive)
+    if (trackConfigName) {
+      trackConfigName = trackConfigName.replace(/^TrackCity:\s*/i, "").trim()
     }
-    return weekendInfo.trackDisplayName || weekendInfo.trackConfigName || null
+    if (weekendInfo.trackDisplayName && trackConfigName) {
+      return `${weekendInfo.trackDisplayName} - ${trackConfigName}`
+    }
+    return weekendInfo.trackDisplayName || trackConfigName || null
   }
 
   const location = formatLocation()

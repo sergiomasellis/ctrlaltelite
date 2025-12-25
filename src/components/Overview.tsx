@@ -22,6 +22,7 @@ import {
   ArrowRight,
   User,
   Award,
+  ExternalLink,
   Sun,
   Moon
 } from "lucide-react"
@@ -201,17 +202,32 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
 
   const formatLocation = (city?: string, state?: string, country?: string) => {
     const parts: string[] = []
-    if (city) parts.push(city)
-    if (state) parts.push(state)
-    if (country && country !== "USA") parts.push(country)
+    // Remove location field prefixes if present (case-insensitive, handles variations)
+    if (city) {
+      const cleanedCity = city.replace(/^TrackCity:\s*/i, "").trim()
+      if (cleanedCity) parts.push(cleanedCity)
+    }
+    if (state) {
+      const cleanedState = state.replace(/^TrackState:\s*/i, "").trim()
+      if (cleanedState) parts.push(cleanedState)
+    }
+    if (country) {
+      const cleanedCountry = country.replace(/^TrackCountry:\s*/i, "").trim()
+      if (cleanedCountry && cleanedCountry !== "USA") parts.push(cleanedCountry)
+    }
     return parts.length > 0 ? parts.join(", ") : null
   }
 
   const formatTrackDisplay = (trackDisplayName?: string, trackConfigName?: string) => {
-    if (trackDisplayName && trackConfigName) {
-      return `${trackDisplayName} - ${trackConfigName}`
+    let cleanedTrackConfigName = trackConfigName
+    // Remove "TrackCity: " prefix if present (case-insensitive)
+    if (cleanedTrackConfigName) {
+      cleanedTrackConfigName = cleanedTrackConfigName.replace(/^TrackCity:\s*/i, "").trim()
     }
-    return trackDisplayName || trackConfigName || null
+    if (trackDisplayName && cleanedTrackConfigName) {
+      return `${trackDisplayName} - ${cleanedTrackConfigName}`
+    }
+    return trackDisplayName || cleanedTrackConfigName || null
   }
 
   const totalSessions = files.length
@@ -591,6 +607,9 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
                         fileInfo.metadata.sessionType,
                         fileInfo.metadata.weekendInfo?.sessionType
                       )
+                      const resultsLink = fileInfo.metadata.weekendInfo?.subSessionID
+                        ? `https://members-ng.iracing.com/web/racing/results-stats/results?subsessionid=${fileInfo.metadata.weekendInfo.subSessionID}`
+                        : null
                       const displayDate = formatDateDisplay(fileInfo.metadata.sessionDate, fileInfo.metadata.sessionTime) || "Unknown Date"
                       const lapCount = fileInfo.metadata.lapCount
                       const recordCount = fileInfo.metadata.recordCount
@@ -615,12 +634,6 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="font-semibold text-foreground truncate">{carName}</p>
-                                {sessionType && (
-                                  <Badge className={cn("h-5 text-[10px] border hidden sm:inline-flex", getSessionTypeColor(fileInfo.metadata.sessionType, fileInfo.metadata.weekendInfo?.sessionType))}>
-                                    <Flag className="h-2.5 w-2.5 mr-1" />
-                                    {sessionType}
-                                  </Badge>
-                                )}
                               </div>
                               <div className="flex items-center gap-3 mt-1 flex-wrap">
                                 <p className="text-xs text-muted-foreground truncate font-mono opacity-70">{fileInfo.name}</p>
@@ -686,8 +699,20 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
                           </div>
 
                           {/* Arrow */}
-                          <div className="flex justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                          <div className="flex justify-end items-center gap-2">
+                            {resultsLink && (
+                              <a
+                                href={resultsLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(event) => event.stopPropagation()}
+                                aria-label="Open iRacing results"
+                                className="text-muted-foreground hover:text-foreground opacity-80 hover:opacity-100 transition-opacity"
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </a>
+                            )}
+                            <ChevronRight className="h-5 w-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                           </div>
                         </div>
                       )

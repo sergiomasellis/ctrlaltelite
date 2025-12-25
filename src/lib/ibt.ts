@@ -328,6 +328,7 @@ export interface IbtWeekendInfo {
   seriesID?: number
   seasonID?: number
   sessionID?: number
+  subSessionID?: number
   official?: number
 }
 
@@ -430,20 +431,35 @@ export async function readIbtMetadata(blob: Blob): Promise<IbtSessionMetadata> {
   const weekendTrackDisplayShortName = extractYamlValue(yaml, "TrackDisplayShortName")
   if (weekendTrackDisplayShortName) weekendInfo.trackDisplayShortName = weekendTrackDisplayShortName
 
+  // Helper to clean track config name by removing "TrackCity: " prefix if present
+  const cleanTrackConfigName = (value: string): string => {
+    return value.replace(/^TrackCity:\s*/i, "").trim()
+  }
+
   const weekendTrackConfigName = extractYamlValue(yaml, "TrackConfigName")
   if (weekendTrackConfigName) {
-    weekendInfo.trackConfigName = weekendTrackConfigName
-    metadata.trackConfigName = weekendTrackConfigName
+    const cleaned = cleanTrackConfigName(weekendTrackConfigName)
+    weekendInfo.trackConfigName = cleaned
+    metadata.trackConfigName = cleaned
+  }
+
+  // Helper to clean location field values by removing field name prefixes
+  const cleanLocationValue = (value: string): string => {
+    return value
+      .replace(/^TrackCity:\s*/i, "")
+      .replace(/^TrackState:\s*/i, "")
+      .replace(/^TrackCountry:\s*/i, "")
+      .trim()
   }
 
   const weekendTrackCity = extractYamlValue(yaml, "TrackCity")
-  if (weekendTrackCity) weekendInfo.trackCity = weekendTrackCity
+  if (weekendTrackCity) weekendInfo.trackCity = cleanLocationValue(weekendTrackCity)
 
   const weekendTrackState = extractYamlValue(yaml, "TrackState")
-  if (weekendTrackState) weekendInfo.trackState = weekendTrackState
+  if (weekendTrackState) weekendInfo.trackState = cleanLocationValue(weekendTrackState)
 
   const weekendTrackCountry = extractYamlValue(yaml, "TrackCountry")
-  if (weekendTrackCountry) weekendInfo.trackCountry = weekendTrackCountry
+  if (weekendTrackCountry) weekendInfo.trackCountry = cleanLocationValue(weekendTrackCountry)
 
   const weekendTrackLength = extractYamlValue(yaml, "TrackLength")
   if (weekendTrackLength) weekendInfo.trackLength = weekendTrackLength
@@ -464,12 +480,24 @@ export async function readIbtMetadata(blob: Blob): Promise<IbtSessionMetadata> {
   if (weekendInfoMatch) {
     const weekendInfoBlock = weekendInfoMatch[1]
     weekendEventType = extractYamlValue(weekendInfoBlock, "EventType")
+    const sessionID = weekendInfoBlock.match(/SessionID:\s*(\d+)/)
+    if (sessionID) weekendInfo.sessionID = parseInt(sessionID[1], 10)
+    const subSessionID = weekendInfoBlock.match(/SubSessionID:\s*(\d+)/)
+    if (subSessionID) weekendInfo.subSessionID = parseInt(subSessionID[1], 10)
   }
   // Fallback to root level EventType if not found in WeekendInfo block
   if (!weekendEventType) {
     weekendEventType = extractYamlValue(yaml, "EventType")
   }
   if (weekendEventType) weekendInfo.sessionType = weekendEventType
+  if (weekendInfo.sessionID == null) {
+    const sessionID = yaml.match(/SessionID:\s*(\d+)/)
+    if (sessionID) weekendInfo.sessionID = parseInt(sessionID[1], 10)
+  }
+  if (weekendInfo.subSessionID == null) {
+    const subSessionID = yaml.match(/SubSessionID:\s*(\d+)/)
+    if (subSessionID) weekendInfo.subSessionID = parseInt(subSessionID[1], 10)
+  }
 
   const weekendDate = extractYamlValue(yaml, "Date")
   if (weekendDate) weekendInfo.eventDate = weekendDate
@@ -888,17 +916,31 @@ export function parseWeekendInfoFromYaml(yaml: string): IbtWeekendInfo {
   const trackDisplayShortName = extractYamlValue(weekendInfoBlock, "TrackDisplayShortName")
   if (trackDisplayShortName) weekendInfo.trackDisplayShortName = trackDisplayShortName
   
+  // Helper to clean track config name by removing "TrackCity: " prefix if present
+  const cleanTrackConfigName = (value: string): string => {
+    return value.replace(/^TrackCity:\s*/i, "").trim()
+  }
+
   const trackConfigName = extractYamlValue(weekendInfoBlock, "TrackConfigName")
-  if (trackConfigName) weekendInfo.trackConfigName = trackConfigName
+  if (trackConfigName) weekendInfo.trackConfigName = cleanTrackConfigName(trackConfigName)
   
+  // Helper to clean location field values by removing field name prefixes
+  const cleanLocationValue = (value: string): string => {
+    return value
+      .replace(/^TrackCity:\s*/i, "")
+      .replace(/^TrackState:\s*/i, "")
+      .replace(/^TrackCountry:\s*/i, "")
+      .trim()
+  }
+
   const trackCity = extractYamlValue(weekendInfoBlock, "TrackCity")
-  if (trackCity) weekendInfo.trackCity = trackCity
+  if (trackCity) weekendInfo.trackCity = cleanLocationValue(trackCity)
   
   const trackState = extractYamlValue(weekendInfoBlock, "TrackState")
-  if (trackState) weekendInfo.trackState = trackState
+  if (trackState) weekendInfo.trackState = cleanLocationValue(trackState)
   
   const trackCountry = extractYamlValue(weekendInfoBlock, "TrackCountry")
-  if (trackCountry) weekendInfo.trackCountry = trackCountry
+  if (trackCountry) weekendInfo.trackCountry = cleanLocationValue(trackCountry)
   
   const trackLength = extractYamlValue(weekendInfoBlock, "TrackLength")
   if (trackLength) weekendInfo.trackLength = trackLength
@@ -928,6 +970,9 @@ export function parseWeekendInfoFromYaml(yaml: string): IbtWeekendInfo {
   
   const sessionID = weekendInfoBlock.match(/SessionID:\s*(\d+)/)
   if (sessionID) weekendInfo.sessionID = parseInt(sessionID[1], 10)
+  
+  const subSessionID = weekendInfoBlock.match(/SubSessionID:\s*(\d+)/)
+  if (subSessionID) weekendInfo.subSessionID = parseInt(subSessionID[1], 10)
   
   const official = weekendInfoBlock.match(/Official:\s*(\d+)/)
   if (official) weekendInfo.official = parseInt(official[1], 10)

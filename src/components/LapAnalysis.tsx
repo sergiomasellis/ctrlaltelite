@@ -209,6 +209,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         
         // Check if SessionNum variable exists in the telemetry file
         const hasSessionNum = vars.some(v => v.name.toLowerCase() === "sessionnum")
+        const hasPlayerCarIdx = vars.some(v => v.name.toLowerCase() === "playercaridx")
 
         const recordCount =
           header.diskSubHeader?.recordCount ??
@@ -249,6 +250,10 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         if (hasSessionNum) {
           varNames.push("SessionNum")
         }
+        
+        if (hasPlayerCarIdx) {
+          varNames.push("PlayerCarIdx")
+        }
 
         const rows = await readIbtSamples(blob, header, vars, {
           varNames,
@@ -262,6 +267,10 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         const byLap: Record<number, Array<Record<string, IbtValue>>> = {}
         const lapSessionNums: Record<number, number | null> = {}
         for (const r of rows) {
+          if (hasPlayerCarIdx && carIdx != null) {
+            const rowCarIdx = num(r["PlayerCarIdx"])
+            if (rowCarIdx == null || rowCarIdx !== carIdx) continue
+          }
           const lap = num(r["Lap"])
           if (lap == null) continue
           byLap[lap] ??= []
@@ -414,40 +423,72 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
           )
 
           // Get session information for this lap
-          const sessionNum = hasSessionNum ? (lapSessionNums[lap] ?? null) : null
-          const sessionInfo = sessionNum != null ? parsedSessions[sessionNum] : null
+          let sessionNum = hasSessionNum ? (lapSessionNums[lap] ?? null) : null
+          let sessionInfo = sessionNum != null ? parsedSessions[sessionNum] : null
           let sessionType = sessionInfo?.sessionType
           
-          // If no session info found and we have sessions, try to infer from available data
+          // If we don't have SessionNum for this lap, try to infer it based on session order and lap numbers
           if (!sessionType && Object.keys(parsedSessions).length > 0) {
-            const sessionEntries = Object.values(parsedSessions)
+            const sessionEntries = Object.values(parsedSessions).sort((a, b) => a.sessionNum - b.sessionNum)
             
-            // If WeekendInfo EventType is Race, prioritize finding Race session
-            if (weekendInfoData?.sessionType?.toLowerCase().includes("race")) {
-              const raceSession = sessionEntries.find(s => 
-                s.sessionType && (s.sessionType.toLowerCase().includes("race") || s.sessionName?.toLowerCase().includes("race"))
-              )
-              if (raceSession) {
-                sessionType = raceSession.sessionType
-              }
+            // If we have SessionNum but no matching session, try to find the closest session
+            if (sessionNum != null && !sessionInfo) {
+              // SessionNum exists but doesn't match any parsed session - use the session with that number if it exists
+              sessionInfo = parsedSessions[sessionNum]
+              sessionType = sessionInfo?.sessionType
             }
             
-            // If still no session type, use first/only session
-            if (!sessionType) {
-              if (sessionEntries.length === 1) {
-                sessionType = sessionEntries[0]?.sessionType
+            // If still no session type, try to infer based on session order and SessionLaps
+            // Typical order: Practice (SessionNum 0) -> Qualifying (SessionNum 1) -> Race (SessionNum 2)
+            if (!sessionType && sessionEntries.length > 0) {
+              // If we have multiple sessions, try to infer based on lap number and session metadata
+              if (sessionEntries.length > 1) {
+                // Try to use SessionLaps to determine which session this lap belongs to
+                let cumulativeLaps = 0
+                let foundSession = false
+                
+                for (const session of sessionEntries) {
+                  const sessionLaps = session.sessionLaps
+                  if (sessionLaps != null && typeof sessionLaps === 'number') {
+                    // If this lap falls within this session's lap count
+                    if (lap > cumulativeLaps && lap <= cumulativeLaps + sessionLaps) {
+                      sessionInfo = session
+                      sessionType = session.sessionType
+                      sessionNum = session.sessionNum ?? null
+                      foundSession = true
+                      break
+                    }
+                    cumulativeLaps += sessionLaps
+                  }
+                }
+                
+                // If SessionLaps didn't help, use heuristic based on lap order
+                if (!foundSession) {
+                  const totalLaps = lapNums.length
+                  const lapIndex = lapNums.indexOf(lap)
+                  const lapRatio = totalLaps > 0 ? lapIndex / totalLaps : 0
+                  
+                  // Map lap position to session (earlier laps -> earlier sessions)
+                  const sessionIndex = Math.min(
+                    Math.floor(lapRatio * sessionEntries.length),
+                    sessionEntries.length - 1
+                  )
+                  sessionInfo = sessionEntries[sessionIndex]
+                  sessionType = sessionInfo?.sessionType
+                  sessionNum = sessionInfo?.sessionNum ?? null
+                }
               } else {
-                // If multiple sessions, prefer Race if available, otherwise use first
-                const raceSession = sessionEntries.find(s => 
-                  s.sessionType && (s.sessionType.toLowerCase().includes("race") || s.sessionName?.toLowerCase().includes("race"))
-                )
-                sessionType = raceSession?.sessionType || sessionEntries[0]?.sessionType
+                // Only one session, use it
+                sessionInfo = sessionEntries[0]
+                sessionType = sessionInfo?.sessionType
+                sessionNum = sessionInfo?.sessionNum ?? null
               }
             }
           }
           
-          // Final fallback: use WeekendInfo EventType if available
-          if (!sessionType && weekendInfoData?.sessionType) {
+          // Final fallback: use WeekendInfo EventType only if we truly have no session information
+          // But prefer to leave as undefined rather than defaulting everything to Race
+          if (!sessionType && weekendInfoData?.sessionType && Object.keys(parsedSessions).length === 0) {
             sessionType = weekendInfoData.sessionType
           }
 
@@ -995,6 +1036,16 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                   <span className="tabular-nums text-foreground">{selectedLaps.length}</span>
                   <span className="opacity-70">Selected</span>
                 </div>
+              </div>
+            )}
+            {ibtLapDataByLap && (weekendInfo?.sessionID != null || weekendInfo?.subSessionID != null) && (
+              <div className="flex items-center gap-2 text-[10px] font-medium text-muted-foreground bg-muted/20 px-3 py-1.5 rounded-full border border-border/40">
+                {weekendInfo?.sessionID != null && (
+                  <span className="font-mono text-foreground/80">SessionID {weekendInfo.sessionID}</span>
+                )}
+                {weekendInfo?.subSessionID != null && (
+                  <span className="font-mono text-foreground/80">SubSessionID {weekendInfo.subSessionID}</span>
+                )}
               </div>
             )}
             <Button
