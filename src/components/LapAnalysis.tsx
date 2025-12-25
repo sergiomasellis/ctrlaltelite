@@ -57,6 +57,8 @@ const CHART_IDS = {
 
 type ChartId = typeof CHART_IDS[keyof typeof CHART_IDS]
 
+const LAP_SESSION_KEY_MULTIPLIER = 10000
+
 // Default chart order
 const DEFAULT_CHART_ORDER: ChartId[] = [
   CHART_IDS.SPEED,
@@ -264,8 +266,107 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         const num = (v: IbtValue): number | null =>
           typeof v === "number" && Number.isFinite(v) ? v : null
 
+        const lapTimesFromCrossings: Record<number, number> = {}
+        const makeLapKey = (lap: number, sessionNum: number | null) =>
+          hasSessionNum && sessionNum != null ? sessionNum * LAP_SESSION_KEY_MULTIPLIER + lap : lap
+        
+        const transitionVarNames = ["SessionTime", "Lap", "LapDist"]
+        if (hasPlayerCarIdx) {
+          transitionVarNames.push("PlayerCarIdx")
+        }
+        if (hasSessionNum) {
+          transitionVarNames.push("SessionNum")
+        }
+        
+        const allSamples = stride > 1
+          ? await readIbtSamples(blob, header, vars, {
+              varNames: transitionVarNames,
+              stride: 1,
+              onProgress: (p) => setIbtProgress(p),
+            })
+          : rows.filter((r) => {
+              if (hasPlayerCarIdx && carIdx != null) {
+                const rowCarIdx = num(r["PlayerCarIdx"])
+                if (rowCarIdx == null || rowCarIdx !== carIdx) return false
+              }
+              return true
+            }).map((r) => {
+              const result: Record<string, IbtValue> = {}
+              for (const vn of transitionVarNames) {
+                result[vn] = r[vn]
+              }
+              return result
+            })
+
+        const filteredSamples = allSamples.filter((r) => {
+          if (hasPlayerCarIdx && carIdx != null) {
+            const rowCarIdx = num(r["PlayerCarIdx"])
+            if (rowCarIdx == null || rowCarIdx !== carIdx) return false
+          }
+          return true
+        })
+
+        const sflCrossings: Array<{ lapKey: number; lap: number; sessionNum: number | null; sessionTime: number }> = []
+        
+        for (let i = 1; i < filteredSamples.length; i++) {
+          const prevSample = filteredSamples[i - 1]
+          const currSample = filteredSamples[i]
+          
+          const prevLap = num(prevSample["Lap"])
+          const currLap = num(currSample["Lap"])
+          const prevSessionTime = num(prevSample["SessionTime"])
+          const currSessionTime = num(currSample["SessionTime"])
+          const prevLapDist = num(prevSample["LapDist"])
+          const currLapDist = num(currSample["LapDist"])
+          const prevSessionNum = hasSessionNum ? num(prevSample["SessionNum"]) : null
+          const currSessionNum = hasSessionNum ? num(currSample["SessionNum"]) : null
+          
+          if (prevLap == null || currLap == null || prevSessionTime == null || currSessionTime == null || 
+              prevLapDist == null || currLapDist == null) continue
+          if (hasSessionNum && (prevSessionNum == null || currSessionNum == null || prevSessionNum !== currSessionNum)) continue
+          if (currLap <= 0) continue
+          
+          if (prevLapDist != null && currLapDist != null && 
+              prevLapDist > currLapDist && currLapDist < 50 && prevLapDist > 100) {
+            const t = (0 - prevLapDist) / (currLapDist - prevLapDist)
+            if (Number.isFinite(t)) {
+              const interpolatedTime = prevSessionTime + t * (currSessionTime - prevSessionTime)
+              if (Number.isFinite(interpolatedTime) && interpolatedTime > 0) {
+                const lapKey = makeLapKey(currLap, currSessionNum)
+                sflCrossings.push({ 
+                  lapKey,
+                  lap: currLap, 
+                  sessionNum: currSessionNum,
+                  sessionTime: interpolatedTime
+                })
+              }
+            }
+          }
+        }
+        
+        for (let i = 1; i < sflCrossings.length; i++) {
+          const prev = sflCrossings[i - 1]!
+          const curr = sflCrossings[i]!
+          
+          if (curr.lap >= prev.lap && curr.lap > 0) {
+            const lapTime = curr.sessionTime - prev.sessionTime
+            if (lapTime > 60 && lapTime < 300) {
+              const targetLap = curr.lap === prev.lap ? curr.lap : prev.lap
+              if (targetLap > 0) {
+                const targetLapKey = makeLapKey(targetLap, curr.sessionNum)
+                const existingTime = lapTimesFromCrossings[targetLapKey]
+                if (existingTime == null || lapTime < existingTime) {
+                  lapTimesFromCrossings[targetLapKey] = lapTime
+                }
+              }
+            }
+          }
+        }
+
         const byLap: Record<number, Array<Record<string, IbtValue>>> = {}
         const lapSessionNums: Record<number, number | null> = {}
+        const lapNumbers: Record<number, number> = {}
+        
         for (const r of rows) {
           if (hasPlayerCarIdx && carIdx != null) {
             const rowCarIdx = num(r["PlayerCarIdx"])
@@ -273,15 +374,19 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
           }
           const lap = num(r["Lap"])
           if (lap == null) continue
-          byLap[lap] ??= []
-          byLap[lap].push(r)
+          const sessionNum = hasSessionNum ? num(r["SessionNum"]) : null
+          const lapKey = makeLapKey(lap, sessionNum)
+          byLap[lapKey] ??= []
+          byLap[lapKey].push(r)
           
           // Track SessionNum for this lap (use first non-null value) if available
-          if (hasSessionNum && lapSessionNums[lap] == null) {
-            const sessionNum = num(r["SessionNum"])
+          if (hasSessionNum && lapSessionNums[lapKey] == null) {
             if (sessionNum != null) {
-              lapSessionNums[lap] = sessionNum
+              lapSessionNums[lapKey] = sessionNum
             }
+          }
+          if (lapNumbers[lapKey] == null) {
+            lapNumbers[lapKey] = lap
           }
         }
 
@@ -291,8 +396,10 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
           .sort((a, b) => a - b)
 
         const lapDataByLap: Record<number, IbtLapData> = {}
-        for (const lap of lapNums) {
-          const lapRows = byLap[lap]
+        
+        for (const lapKey of lapNums) {
+          const lapRows = byLap[lapKey]
+          const lapNumber = lapNumbers[lapKey] ?? lapKey
           const raw: Array<{
             sessionTime: number
             lapDistKm: number
@@ -378,8 +485,32 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
 
           if (raw.length < 20) continue
 
-          const minTime = Math.min(...raw.map((p) => p.sessionTime))
+          const sortedByTime = [...raw].sort((a, b) => a.sessionTime - b.sessionTime)
+          const minTime = sortedByTime[0]!.sessionTime
           const minDist = Math.min(...raw.map((p) => p.lapDistKm))
+
+          let lapTimeSec: number
+          const preciseLapTime = lapTimesFromCrossings[lapKey]
+
+          if (preciseLapTime != null && Number.isFinite(preciseLapTime) && preciseLapTime > 60 && preciseLapTime < 300) {
+            lapTimeSec = preciseLapTime
+          } else {
+            const maxTime = Math.max(...raw.map((p) => p.sessionTime))
+            lapTimeSec = maxTime - minTime
+          }
+          
+          // Get session information for this lap
+          let sessionNum = hasSessionNum ? (lapSessionNums[lapKey] ?? null) : null
+          let sessionInfo = sessionNum != null ? parsedSessions[sessionNum] : null
+          let sessionType = sessionInfo?.sessionType
+          
+          // Use official lap time from ResultsPositions if available (most accurate) - only for fastest lap
+          if (sessionInfo?.resultsPositions && carIdx != null) {
+            const carResult = sessionInfo.resultsPositions.find((pos) => pos.carIdx === carIdx)
+            if (carResult && carResult.fastestLap === lapNumber && carResult.fastestTime > 0) {
+              lapTimeSec = carResult.fastestTime
+            }
+          }
 
           const points: IbtLapPoint[] = raw
             .map((p) => ({
@@ -413,20 +544,14 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
 
           const byDist = [...points].sort((a, b) => a.distanceKm - b.distanceKm)
           const byTime = [...points].sort((a, b) => a.timeSec - b.timeSec)
-          const lapTimeSec = Math.max(...byTime.map((p) => p.timeSec))
           const distanceKm = Math.max(...byDist.map((p) => p.distanceKm))
 
           // Calculate sector times
           const sectorTimes = calculateSectorTimes(
-            { byDist, byTime, lapTimeSec, distanceKm, points: points.length, sectorTimes: [] },
+            { byDist, byTime, lapNumber, lapTimeSec, distanceKm, points: points.length, sectorTimes: [] },
             sectors,
           )
 
-          // Get session information for this lap
-          let sessionNum = hasSessionNum ? (lapSessionNums[lap] ?? null) : null
-          let sessionInfo = sessionNum != null ? parsedSessions[sessionNum] : null
-          let sessionType = sessionInfo?.sessionType
-          
           // If we don't have SessionNum for this lap, try to infer it based on session order and lap numbers
           if (!sessionType && Object.keys(parsedSessions).length > 0) {
             const sessionEntries = Object.values(parsedSessions).sort((a, b) => a.sessionNum - b.sessionNum)
@@ -451,7 +576,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                   const sessionLaps = session.sessionLaps
                   if (sessionLaps != null && typeof sessionLaps === 'number') {
                     // If this lap falls within this session's lap count
-                    if (lap > cumulativeLaps && lap <= cumulativeLaps + sessionLaps) {
+                    if (lapNumber > cumulativeLaps && lapNumber <= cumulativeLaps + sessionLaps) {
                       sessionInfo = session
                       sessionType = session.sessionType
                       sessionNum = session.sessionNum ?? null
@@ -465,7 +590,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                 // If SessionLaps didn't help, use heuristic based on lap order
                 if (!foundSession) {
                   const totalLaps = lapNums.length
-                  const lapIndex = lapNums.indexOf(lap)
+                  const lapIndex = lapNums.indexOf(lapKey)
                   const lapRatio = totalLaps > 0 ? lapIndex / totalLaps : 0
                   
                   // Map lap position to session (earlier laps -> earlier sessions)
@@ -492,9 +617,10 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
             sessionType = weekendInfoData.sessionType
           }
 
-          lapDataByLap[lap] = {
+          lapDataByLap[lapKey] = {
             byDist,
             byTime,
+            lapNumber,
             lapTimeSec,
             distanceKm,
             points: points.length,
@@ -524,7 +650,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         const completedLaps = allLaps.filter((lap) => {
           const data = lapDataByLap[lap]!
           return (
-            lap !== 0 &&
+            data.lapNumber !== 0 &&
             data.distanceKm >= completionThreshold &&
             data.lapTimeSec > 0 &&
             Number.isFinite(data.lapTimeSec)
@@ -588,6 +714,11 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
     }
   }, [initialFile, loadIbt])
 
+  const getLapLabel = useCallback(
+    (lap: number) => ibtLapDataByLap?.[lap]?.lapNumber ?? lap,
+    [ibtLapDataByLap],
+  )
+
   // Compute original X max (full track distance)
   const originalXMax = useMemo(() => {
     if (!ibtLapDataByLap || selectedLaps.length === 0) return null
@@ -606,66 +737,66 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
   const speedSeries = useMemo<ChartSeries[]>(() => {
     return selectedLaps.map((lap) => ({
       key: `speed_${lap}`,
-      label: `Lap ${lap}`,
+      label: `Lap ${getLapLabel(lap)}`,
       color: lapColors[lap] ?? LAP_COLOR_PALETTE[0],
     }))
-  }, [selectedLaps, lapColors])
+  }, [selectedLaps, lapColors, getLapLabel])
 
   const throttleSeries = useMemo<ChartSeries[]>(() => {
     return selectedLaps.map((lap) => ({
       key: `throttle_${lap}`,
-      label: `Lap ${lap}`,
+      label: `Lap ${getLapLabel(lap)}`,
       color: lapColors[lap] ?? LAP_COLOR_PALETTE[0],
     }))
-  }, [selectedLaps, lapColors])
+  }, [selectedLaps, lapColors, getLapLabel])
 
   const brakeSeries = useMemo<ChartSeries[]>(() => {
     return selectedLaps.map((lap) => ({
       key: `brake_${lap}`,
-      label: `Lap ${lap}`,
+      label: `Lap ${getLapLabel(lap)}`,
       color: lapColors[lap] ?? LAP_COLOR_PALETTE[0],
     }))
-  }, [selectedLaps, lapColors])
+  }, [selectedLaps, lapColors, getLapLabel])
 
   const gearSeries = useMemo<ChartSeries[]>(() => {
     return selectedLaps.map((lap) => ({
       key: `gear_${lap}`,
-      label: `Lap ${lap}`,
+      label: `Lap ${getLapLabel(lap)}`,
       color: lapColors[lap] ?? LAP_COLOR_PALETTE[0],
     }))
-  }, [selectedLaps, lapColors])
+  }, [selectedLaps, lapColors, getLapLabel])
 
   const rpmSeries = useMemo<ChartSeries[]>(() => {
     return selectedLaps.map((lap) => ({
       key: `rpm_${lap}`,
-      label: `Lap ${lap}`,
+      label: `Lap ${getLapLabel(lap)}`,
       color: lapColors[lap] ?? LAP_COLOR_PALETTE[0],
     }))
-  }, [selectedLaps, lapColors])
+  }, [selectedLaps, lapColors, getLapLabel])
 
   const steeringSeries = useMemo<ChartSeries[]>(() => {
     return selectedLaps.map((lap) => ({
       key: `steering_${lap}`,
-      label: `Lap ${lap}`,
+      label: `Lap ${getLapLabel(lap)}`,
       color: lapColors[lap] ?? LAP_COLOR_PALETTE[0],
     }))
-  }, [selectedLaps, lapColors])
+  }, [selectedLaps, lapColors, getLapLabel])
 
   const lineDistSeries = useMemo<ChartSeries[]>(() => {
     return selectedLaps.slice(1).map((lap) => ({
       key: `lineDist_${lap}`,
-      label: `Lap ${lap}`,
+      label: `Lap ${getLapLabel(lap)}`,
       color: lapColors[lap] ?? LAP_COLOR_PALETTE[0],
     }))
-  }, [selectedLaps, lapColors])
+  }, [selectedLaps, lapColors, getLapLabel])
 
   const timeDeltaSeries = useMemo<ChartSeries[]>(() => {
     return selectedLaps.slice(1).map((lap) => ({
       key: `timeDelta_${lap}`,
-      label: `Lap ${lap}`,
+      label: `Lap ${getLapLabel(lap)}`,
       color: lapColors[lap] ?? LAP_COLOR_PALETTE[0],
     }))
-  }, [selectedLaps, lapColors])
+  }, [selectedLaps, lapColors, getLapLabel])
 
   // Tire series - each tire position for each lap
   const tireTempSeries = useMemo<ChartSeries[]>(() => {
@@ -678,13 +809,13 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         const tireKey = ["LF", "RF", "LR", "RR"][i]!
         series.push({
           key: `tireTemp${tireKey}_${lap}`,
-          label: `Lap ${lap} ${tireLabels[i]}`,
+          label: `Lap ${getLapLabel(lap)} ${tireLabels[i]}`,
           color: tireColors[i]!,
         })
       }
     }
     return series
-  }, [selectedLaps])
+  }, [selectedLaps, getLapLabel])
 
   const tirePressureSeries = useMemo<ChartSeries[]>(() => {
     const series: ChartSeries[] = []
@@ -696,13 +827,13 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         const tireKey = ["LF", "RF", "LR", "RR"][i]!
         series.push({
           key: `tirePressure${tireKey}_${lap}`,
-          label: `Lap ${lap} ${tireLabels[i]}`,
+          label: `Lap ${getLapLabel(lap)} ${tireLabels[i]}`,
           color: tireColors[i]!,
         })
       }
     }
     return series
-  }, [selectedLaps])
+  }, [selectedLaps, getLapLabel])
 
   const tireWearSeries = useMemo<ChartSeries[]>(() => {
     const series: ChartSeries[] = []
@@ -714,13 +845,13 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         const tireKey = ["LF", "RF", "LR", "RR"][i]!
         series.push({
           key: `tireWear${tireKey}_${lap}`,
-          label: `Lap ${lap} ${tireLabels[i]}`,
+          label: `Lap ${getLapLabel(lap)} ${tireLabels[i]}`,
           color: tireColors[i]!,
         })
       }
     }
     return series
-  }, [selectedLaps])
+  }, [selectedLaps, getLapLabel])
 
   // Memoized formatValue functions to prevent SyncedChart re-renders
   const formatDecimal1 = useCallback((v: number) => v.toFixed(1), [])

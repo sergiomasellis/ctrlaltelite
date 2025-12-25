@@ -97,6 +97,7 @@ export function LapSelector({
                   const isSelected = selectedLaps.includes(lap)
                   const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
                   const lapData = lapDataByLap?.[lap]
+                  const lapLabel = lapData?.lapNumber ?? lap
                   const lapTime = lapData ? formatLapTime(lapData.lapTimeSec) : null
                   const isRef = selectedLaps[0] === lap
 
@@ -113,7 +114,7 @@ export function LapSelector({
                         style={{ backgroundColor: color }}
                       />
                       <div className="flex flex-col min-w-0 flex-1">
-                        <span className="font-medium">Lap {lap}</span>
+                        <span className="font-medium">Lap {lapLabel}</span>
                         {lapTime && (
                           <span className="text-[10px] text-muted-foreground tabular-nums">{lapTime}</span>
                         )}

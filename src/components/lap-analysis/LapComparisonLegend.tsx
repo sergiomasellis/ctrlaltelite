@@ -22,12 +22,13 @@ export function LapComparisonLegend({
         {selectedLaps.map((lap) => {
           const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
           const lapData = lapDataByLap?.[lap]
-          const lapTime = lapData ? formatLapTime(lapData.lapTimeSec) : `Lap ${lap}`
+          const lapLabel = lapData?.lapNumber ?? lap
+          const lapTime = lapData ? formatLapTime(lapData.lapTimeSec) : `Lap ${lapLabel}`
           const isRef = selectedLaps[0] === lap
           return (
             <div key={lap} className="flex items-center gap-2 text-xs">
               <div className="h-3 w-3 rounded-sm" style={{ backgroundColor: color }} />
-              <span className="font-medium">Lap {lap}</span>
+              <span className="font-medium">Lap {lapLabel}</span>
               <span className="text-muted-foreground">{lapTime}</span>
               {isRef && <span className="text-[10px] text-muted-foreground">(reference)</span>}
             </div>
@@ -53,11 +54,12 @@ export function LapComparisonLegend({
                 }
               }
               const color = lapColors[bestLap] ?? LAP_COLOR_PALETTE[0]
+              const bestLapLabel = lapDataByLap[bestLap]?.lapNumber ?? bestLap
               return (
                 <div key={sectorNum} className="flex items-center gap-2 text-xs">
                   <span className="text-muted-foreground w-6">S{sectorNum}</span>
                   <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: color }} />
-                  <span className="font-medium">Lap {bestLap}</span>
+                  <span className="font-medium">Lap {bestLapLabel}</span>
                   <span className="text-muted-foreground">{formatSectorTime(bestTime)}</span>
                 </div>
               )

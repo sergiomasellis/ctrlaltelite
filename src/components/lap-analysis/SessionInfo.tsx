@@ -242,6 +242,7 @@ export function SessionInfo({
                     {laps.map((lap) => {
                       const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
                       const isRef = lap === selectedLaps[0]
+                      const lapLabel = lapDataByLap?.[lap]?.lapNumber ?? lap
                       return (
                         <div
                           key={lap}
@@ -252,7 +253,7 @@ export function SessionInfo({
                             style={{ backgroundColor: color }}
                           />
                           <span className={`text-[10px] tabular-nums ${isRef ? "font-semibold" : ""}`}>
-                            {isRef ? "REF" : `L${lap}`}
+                            {isRef ? "REF" : `L${lapLabel}`}
                           </span>
                         </div>
                       )

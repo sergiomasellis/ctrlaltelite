@@ -26,6 +26,7 @@ export function SectorTimesTable({
         <div className="mb-3 flex items-center gap-3">
           {selectedLaps.map((lap, idx) => {
             const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
+            const lapLabel = lapDataByLap[lap]?.lapNumber ?? lap
             return (
               <div key={lap} className="flex items-center gap-1.5">
                 <div
@@ -33,7 +34,7 @@ export function SectorTimesTable({
                   style={{ backgroundColor: color }}
                 />
                 <span className="text-[10px] text-muted-foreground">
-                  {idx === 0 ? "REF" : `L${lap}`}
+                  {idx === 0 ? "REF" : `L${lapLabel}`}
                 </span>
               </div>
             )
@@ -66,7 +67,9 @@ export function SectorTimesTable({
                     }}
                   />
                   <span className={lap === selectedLaps[0] ? "font-semibold" : ""}>
-                    {lap === selectedLaps[0] ? "REF" : `L${lap}`}
+                    {lap === selectedLaps[0]
+                      ? "REF"
+                      : `L${lapDataByLap[lap]?.lapNumber ?? lap}`}
                   </span>
                 </div>
               ))}
@@ -170,4 +173,3 @@ export function SectorTimesTable({
     </div>
   )
 }
-
