@@ -21,143 +21,150 @@ export function SectorTimesTable({
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Sector Times</span>
       </div>
 
-      {/* Lap color indicators */}
-      {selectedLaps.length > 1 && lapDataByLap && (
-        <div className="mb-3 flex items-center gap-3">
-          {selectedLaps.map((lap, idx) => {
-            const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
-            const lapLabel = lapDataByLap[lap]?.lapNumber ?? lap
-            return (
-              <div key={lap} className="flex items-center gap-1.5">
-                <div
-                  className="h-2.5 w-2.5 rounded-sm"
-                  style={{ backgroundColor: color }}
-                />
-                <span className="text-[10px] text-muted-foreground">
-                  {idx === 0 ? "REF" : `L${lapLabel}`}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
       {/* Sector times table */}
       <div className="space-y-1 text-xs">
         {selectedLaps.length > 0 && lapDataByLap && sectorBoundaries.length > 0 ? (
           <div className="space-y-2">
-            {/* Header */}
-            <div
-              className="grid gap-1 text-[10px] text-muted-foreground border-b border-border pb-1"
-              style={{
-                gridTemplateColumns: `40px repeat(${selectedLaps.length}, minmax(60px, 1fr))`,
-              }}
-            >
-              <div className="font-medium uppercase tracking-wide">Sec</div>
-              {selectedLaps.map((lap) => (
-                <div
-                  key={lap}
-                  className="flex items-center justify-center gap-1"
-                >
-                  <div
-                    className="h-2 w-2 rounded-sm"
-                    style={{
-                      backgroundColor:
-                        lapColors[lap] ?? LAP_COLOR_PALETTE[0],
-                    }}
-                  />
-                  <span className={lap === selectedLaps[0] ? "font-semibold" : ""}>
-                    {lap === selectedLaps[0]
-                      ? "REF"
-                      : `L${lapDataByLap[lap]?.lapNumber ?? lap}`}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Sector rows */}
-            {sectorBoundaries.slice(1).map((sector) => {
-              const sectorNum = sector.sectorNum
-              return (
-                <div
-                  key={sectorNum}
-                  className="grid gap-1"
-                  style={{
-                    gridTemplateColumns: `40px repeat(${selectedLaps.length}, minmax(60px, 1fr))`,
-                  }}
-                >
-                  <div className="font-medium text-muted-foreground">
-                    S{sectorNum}
-                  </div>
-                  {selectedLaps.map((lap) => {
-                    const lapData = lapDataByLap[lap]
-                    const sectorTime = lapData?.sectorTimes.find(
-                      (st) => st.sectorNum === sectorNum
-                    )
-                    const refLap = selectedLaps[0]
-                    const refData = lapDataByLap[refLap]
-                    const refSectorTime = refData?.sectorTimes.find(
-                      (st) => st.sectorNum === sectorNum
-                    )
-                    const delta =
-                      sectorTime && refSectorTime
-                        ? sectorTime.timeSec - refSectorTime.timeSec
-                        : null
-                    const isRef = lap === refLap
-
+            {/* Lap color indicators - horizontally scrollable */}
+            {selectedLaps.length > 1 && (
+              <div className="mb-3 overflow-x-auto scrollbar-thin scrollbar-thumb-border/40">
+                <div className="flex items-center gap-3 min-w-max">
+                  {selectedLaps.map((lap, idx) => {
+                    const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
+                    const lapLabel = lapDataByLap[lap]?.lapNumber ?? lap
                     return (
-                      <div
-                        key={lap}
-                        className={`text-center ${
-                          isRef ? "font-semibold" : ""
-                        }`}
-                      >
-                        {sectorTime ? (
-                          <div>
-                            <div className="tabular-nums">
-                              {formatSectorTime(sectorTime.timeSec)}
-                            </div>
-                            {!isRef && delta != null && (
-                              <div
-                                className={`text-[9px] tabular-nums ${
-                                  delta >= 0
-                                    ? "text-red-400"
-                                    : "text-green-400"
-                                }`}
-                              >
-                                {delta >= 0 ? "+" : ""}
-                                {delta.toFixed(3)}s
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="text-muted-foreground">—</div>
-                        )}
+                      <div key={lap} className="flex items-center gap-1.5 flex-shrink-0">
+                        <div
+                          className="h-2.5 w-2.5 rounded-sm"
+                          style={{ backgroundColor: color }}
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          {idx === 0 ? "REF" : `L${lapLabel}`}
+                        </span>
                       </div>
                     )
                   })}
                 </div>
-              )
-            })}
+              </div>
+            )}
 
-            {/* Total row */}
-            <div
-              className="grid gap-1 pt-2 border-t border-border font-medium"
-              style={{
-                gridTemplateColumns: `40px repeat(${selectedLaps.length}, minmax(60px, 1fr))`,
-              }}
-            >
-              <div className="text-muted-foreground">Tot</div>
-              {selectedLaps.map((lap) => {
-                const lapData = lapDataByLap[lap]
-                return (
-                  <div key={lap} className="text-center tabular-nums">
-                    {lapData
-                      ? formatSectorTime(lapData.lapTimeSec)
-                      : "—"}
-                  </div>
-                )
-              })}
+            {/* Scrollable table container */}
+            <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-border/40">
+              <div className="min-w-max space-y-2">
+                {/* Header */}
+                <div
+                  className="grid gap-1 text-[10px] text-muted-foreground border-b border-border pb-1"
+                  style={{
+                    gridTemplateColumns: `40px repeat(${selectedLaps.length}, 70px)`,
+                  }}
+                >
+                  <div className="font-medium uppercase tracking-wide">Sec</div>
+                  {selectedLaps.map((lap) => (
+                    <div
+                      key={lap}
+                      className="flex items-center justify-center gap-1"
+                    >
+                      <div
+                        className="h-2 w-2 rounded-sm"
+                        style={{
+                          backgroundColor:
+                            lapColors[lap] ?? LAP_COLOR_PALETTE[0],
+                        }}
+                      />
+                      <span className={lap === selectedLaps[0] ? "font-semibold" : ""}>
+                        {lap === selectedLaps[0]
+                          ? "REF"
+                          : `L${lapDataByLap[lap]?.lapNumber ?? lap}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Sector rows */}
+                {sectorBoundaries.slice(1).map((sector) => {
+                  const sectorNum = sector.sectorNum
+                  return (
+                    <div
+                      key={sectorNum}
+                      className="grid gap-1"
+                      style={{
+                        gridTemplateColumns: `40px repeat(${selectedLaps.length}, 70px)`,
+                      }}
+                    >
+                      <div className="font-medium text-muted-foreground">
+                        S{sectorNum}
+                      </div>
+                      {selectedLaps.map((lap) => {
+                        const lapData = lapDataByLap[lap]
+                        const sectorTime = lapData?.sectorTimes.find(
+                          (st) => st.sectorNum === sectorNum
+                        )
+                        const refLap = selectedLaps[0]
+                        const refData = lapDataByLap[refLap]
+                        const refSectorTime = refData?.sectorTimes.find(
+                          (st) => st.sectorNum === sectorNum
+                        )
+                        const delta =
+                          sectorTime && refSectorTime
+                            ? sectorTime.timeSec - refSectorTime.timeSec
+                            : null
+                        const isRef = lap === refLap
+
+                        return (
+                          <div
+                            key={lap}
+                            className={`text-center ${
+                              isRef ? "font-semibold" : ""
+                            }`}
+                          >
+                            {sectorTime ? (
+                              <div>
+                                <div className="tabular-nums">
+                                  {formatSectorTime(sectorTime.timeSec)}
+                                </div>
+                                {!isRef && delta != null && (
+                                  <div
+                                    className={`text-[9px] tabular-nums ${
+                                      delta >= 0
+                                        ? "text-red-400"
+                                        : "text-green-400"
+                                    }`}
+                                  >
+                                    {delta >= 0 ? "+" : ""}
+                                    {delta.toFixed(3)}s
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-muted-foreground">—</div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+
+                {/* Total row */}
+                <div
+                  className="grid gap-1 pt-2 border-t border-border font-medium"
+                  style={{
+                    gridTemplateColumns: `40px repeat(${selectedLaps.length}, 70px)`,
+                  }}
+                >
+                  <div className="text-muted-foreground">Tot</div>
+                  {selectedLaps.map((lap) => {
+                    const lapData = lapDataByLap[lap]
+                    return (
+                      <div key={lap} className="text-center tabular-nums">
+                        {lapData
+                          ? formatSectorTime(lapData.lapTimeSec)
+                          : "—"}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
           </div>
         ) : selectedLaps.length === 0 ? (

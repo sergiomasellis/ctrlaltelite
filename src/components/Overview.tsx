@@ -32,13 +32,9 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { scanTelemetryFiles, type TelemetryFileInfo } from "@/lib/telemetry-scanner"
+import type { OverviewProps, TelemetrySessionGroup } from "@/components/types"
 import { readFile } from "@tauri-apps/plugin-fs"
 import { BaseDirectory } from "@tauri-apps/api/path"
-
-interface OverviewProps {
-  onFileSelect: (file: File) => void
-  onFileUpload: () => void
-}
 
 // Country name to country code mapping
 const COUNTRY_NAME_TO_CODE: Record<string, string> = {
@@ -117,7 +113,7 @@ function CountryFlag({ countryName }: { countryName: string }) {
   )
 }
 
-export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
+export function Overview({ onFilesSelect, onFileUpload }: OverviewProps) {
   const [files, setFiles] = useState<TelemetryFileInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -150,20 +146,26 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
     loadFiles()
   }, [loadFiles])
 
-  const handleFileClick = useCallback(
-    async (fileInfo: TelemetryFileInfo) => {
+  const loadFileFromInfo = useCallback(async (fileInfo: TelemetryFileInfo) => {
+    const relativePath = `iRacing/telemetry/${fileInfo.name}`
+    const fileData = await readFile(relativePath, { baseDir: BaseDirectory.Document })
+    const blob = new Blob([new Uint8Array(fileData as ArrayLike<number>)])
+    return new File([blob], fileInfo.name, { type: "application/octet-stream" })
+  }, [])
+
+  const handleGroupClick = useCallback(
+    async (filesToLoad: TelemetryFileInfo[]) => {
+      const readyFiles = filesToLoad.filter((file) => !file.error)
+      if (readyFiles.length === 0) return
       try {
-        const relativePath = `iRacing/telemetry/${fileInfo.name}`
-        const fileData = await readFile(relativePath, { baseDir: BaseDirectory.Document })
-        const blob = new Blob([new Uint8Array(fileData as ArrayLike<number>)])
-        const file = new File([blob], fileInfo.name, { type: "application/octet-stream" })
-        onFileSelect(file)
+        setError(null)
+        const loadedFiles = await Promise.all(readyFiles.map(loadFileFromInfo))
+        onFilesSelect(loadedFiles)
       } catch (err) {
-        console.error("Failed to load file:", fileInfo.path, err)
         setError(`Failed to load file: ${err instanceof Error ? err.message : String(err)}`)
       }
     },
-    [onFileSelect]
+    [loadFileFromInfo, onFilesSelect]
   )
 
   const formatDateDisplay = (date?: string, time?: string) => {
@@ -229,6 +231,23 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
     }
     return trackDisplayName || cleanedTrackConfigName || null
   }
+
+  const getSessionTimestamp = useCallback((fileInfo: TelemetryFileInfo) => {
+    if (fileInfo.metadata.sessionDate && fileInfo.metadata.sessionTime) {
+      return new Date(`${fileInfo.metadata.sessionDate} ${fileInfo.metadata.sessionTime}`).getTime()
+    }
+    return 0
+  }, [])
+
+  const sessionTypeOrder = useCallback((sessionType: string) => {
+    const normalized = sessionType.toLowerCase()
+    if (normalized.includes("race")) return 0
+    if (normalized.includes("qualify")) return 1
+    if (normalized.includes("practice")) return 2
+    if (normalized.includes("warmup")) return 3
+    if (normalized.includes("test")) return 4
+    return 5
+  }, [])
 
   const totalSessions = files.length
   const errorSessions = files.filter((file) => file.error).length
@@ -303,9 +322,122 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
     return null
   }, [files])
 
-  const filteredFiles = useMemo(() => {
-    return files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
-  }, [files, searchQuery])
+  const groupedSessions = useMemo(() => {
+    const grouped = new Map<string, TelemetryFileInfo[]>()
+
+    files.forEach((file) => {
+      const seasonID = file.metadata.weekendInfo?.seasonID
+      const sessionID = file.metadata.weekendInfo?.sessionID
+      const groupKey = sessionID != null
+        ? seasonID != null
+          ? `season-${seasonID}-session-${sessionID}`
+          : `session-${sessionID}`
+        : file.path
+      const existing = grouped.get(groupKey)
+      if (existing) {
+        existing.push(file)
+      } else {
+        grouped.set(groupKey, [file])
+      }
+    })
+
+    const groups: TelemetrySessionGroup[] = []
+
+    grouped.forEach((groupFiles, groupKey) => {
+      const sessionTypes = Array.from(new Set(
+        groupFiles
+          .map((file) => formatSessionType(file.metadata.sessionType, file.metadata.weekendInfo?.sessionType))
+          .filter((value): value is string => Boolean(value))
+      )).sort((a, b) => sessionTypeOrder(a) - sessionTypeOrder(b))
+
+      const primaryFile = groupFiles.reduce((latest, file) => {
+        const latestTime = getSessionTimestamp(latest)
+        const currentTime = getSessionTimestamp(file)
+        const latestType = formatSessionType(latest.metadata.sessionType, latest.metadata.weekendInfo?.sessionType)
+        const currentType = formatSessionType(file.metadata.sessionType, file.metadata.weekendInfo?.sessionType)
+        const latestIsRace = latestType?.toLowerCase().includes("race")
+        const currentIsRace = currentType?.toLowerCase().includes("race")
+        if (currentIsRace && !latestIsRace) return file
+        if (currentTime > latestTime) return file
+        return latest
+      }, groupFiles[0]!)
+
+      const seasonID = groupFiles.map((file) => file.metadata.weekendInfo?.seasonID).find((value) => value != null)
+      const sessionID = groupFiles.map((file) => file.metadata.weekendInfo?.sessionID).find((value) => value != null)
+      const subSessionIDs = Array.from(new Set(
+        groupFiles
+          .map((file) => file.metadata.weekendInfo?.subSessionID)
+          .filter((value): value is number => value != null)
+      )).sort((a, b) => a - b)
+
+      const trackDisplay = formatTrackDisplay(
+        primaryFile.metadata.trackDisplayName,
+        primaryFile.metadata.trackConfigName
+      ) || primaryFile.metadata.trackName || "Unknown Track"
+
+      const location = formatLocation(
+        primaryFile.metadata.weekendInfo?.trackCity,
+        primaryFile.metadata.weekendInfo?.trackState,
+        primaryFile.metadata.weekendInfo?.trackCountry
+      )
+
+      const carName = primaryFile.metadata.carName || "Unknown Car"
+      const displayDate = formatDateDisplay(primaryFile.metadata.sessionDate, primaryFile.metadata.sessionTime) || "Unknown Date"
+      const totalLaps = groupFiles.reduce((sum, file) => sum + (file.metadata.lapCount || 0), 0)
+      const totalRecords = groupFiles.reduce((sum, file) => sum + (file.metadata.recordCount || 0), 0)
+      const hasReadyFiles = groupFiles.some((file) => !file.error)
+      const hasErrors = groupFiles.some((file) => file.error)
+
+      const raceFile = groupFiles.find((file) => {
+        const sessionType = formatSessionType(file.metadata.sessionType, file.metadata.weekendInfo?.sessionType)
+        return sessionType?.toLowerCase().includes("race")
+      })
+      const resultsFile = raceFile ?? primaryFile
+      const resultsLink = resultsFile.metadata.weekendInfo?.subSessionID
+        ? `https://members-ng.iracing.com/web/racing/results-stats/results?subsessionid=${resultsFile.metadata.weekendInfo.subSessionID}`
+        : null
+
+      const searchText = [
+        carName,
+        trackDisplay,
+        location ?? "",
+        sessionTypes.join(" "),
+        groupFiles.map((file) => file.name).join(" "),
+        seasonID != null ? String(seasonID) : "",
+        sessionID != null ? String(sessionID) : "",
+        subSessionIDs.length > 0 ? subSessionIDs.join(" ") : "",
+      ].join(" ").toLowerCase()
+
+      groups.push({
+        id: groupKey,
+        files: groupFiles,
+        primaryFile,
+        seasonID,
+        sessionID,
+        subSessionIDs,
+        sessionTypes,
+        totalLaps,
+        totalRecords,
+        displayDate,
+        dateSortValue: getSessionTimestamp(primaryFile),
+        location,
+        trackDisplay,
+        carName,
+        resultsLink,
+        hasReadyFiles,
+        hasErrors,
+        searchText,
+      })
+    })
+
+    return groups.sort((a, b) => b.dateSortValue - a.dateSortValue)
+  }, [files, formatDateDisplay, formatLocation, formatSessionType, formatTrackDisplay, getSessionTimestamp, sessionTypeOrder])
+
+  const filteredGroups = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return groupedSessions
+    return groupedSessions.filter((group) => group.searchText.includes(query))
+  }, [groupedSessions, searchQuery])
 
   return (
     <div className="relative h-full bg-background text-foreground overflow-hidden flex flex-col">
@@ -541,7 +673,7 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold tracking-tight">Recent Sessions</h2>
-                <p className="text-sm text-muted-foreground">Select a session to begin detailed telemetry analysis.</p>
+                <p className="text-sm text-muted-foreground">Select a weekend to begin detailed telemetry analysis.</p>
               </div>
 
               <div className="relative w-full sm:w-72">
@@ -564,7 +696,7 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
                     {loading ? "Loading library..." : refreshing ? "Refreshing metadata..." : "Scanning library..."}
                   </p>
                 </div>
-              ) : filteredFiles.length === 0 ? (
+              ) : filteredGroups.length === 0 ? (
                 <div className="h-96 flex items-center justify-center flex-col gap-4 text-center p-8">
                   <div className="h-16 w-16 rounded-full bg-muted/50 flex items-center justify-center mb-2">
                     <Search className="h-8 w-8 text-muted-foreground/50" />
@@ -591,39 +723,24 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
 
                   {/* Table Body */}
                   <div className="divide-y divide-border/30">
-                    {filteredFiles.map((fileInfo) => {
-                      const isErrored = Boolean(fileInfo.error)
-                      const carName = fileInfo.metadata.carName || "Unknown Car"
-                      const trackDisplay = formatTrackDisplay(
-                        fileInfo.metadata.trackDisplayName,
-                        fileInfo.metadata.trackConfigName
-                      ) || fileInfo.metadata.trackName || "Unknown Track"
-                      const location = formatLocation(
-                        fileInfo.metadata.weekendInfo?.trackCity,
-                        fileInfo.metadata.weekendInfo?.trackState,
-                        fileInfo.metadata.weekendInfo?.trackCountry
-                      )
-                      const sessionType = formatSessionType(
-                        fileInfo.metadata.sessionType,
-                        fileInfo.metadata.weekendInfo?.sessionType
-                      )
-                      const resultsLink = fileInfo.metadata.weekendInfo?.subSessionID
-                        ? `https://members-ng.iracing.com/web/racing/results-stats/results?subsessionid=${fileInfo.metadata.weekendInfo.subSessionID}`
-                        : null
-                      const displayDate = formatDateDisplay(fileInfo.metadata.sessionDate, fileInfo.metadata.sessionTime) || "Unknown Date"
-                      const lapCount = fileInfo.metadata.lapCount
-                      const recordCount = fileInfo.metadata.recordCount
+                    {filteredGroups.map((group) => {
+                      const isErrored = !group.hasReadyFiles
+      const sessionIdLabel = group.sessionID != null
+        ? group.seasonID != null
+          ? `Season ${group.seasonID} - Session ${group.sessionID}`
+          : `Session ${group.sessionID}`
+        : group.primaryFile.name
+                      const sessionCountLabel = group.files.length > 1 ? `${group.files.length} sessions` : null
 
                       return (
                         <div
-                          key={fileInfo.path}
-                          onClick={() => !isErrored && handleFileClick(fileInfo)}
+                          key={group.id}
+                          onClick={() => !isErrored && handleGroupClick(group.files)}
                           className={cn(
                             "group grid grid-cols-[1fr] md:grid-cols-[2.5fr_2fr_1fr_1fr_1fr_40px] gap-4 px-6 py-4 items-center transition-all duration-200",
                             isErrored ? "opacity-60 bg-destructive/5" : "hover:bg-accent/50 cursor-pointer"
                           )}
                         >
-                          {/* Primary Info */}
                           <div className="flex items-center gap-4 min-w-0">
                             <div className={cn(
                               "h-10 w-10 flex-shrink-0 rounded-lg flex items-center justify-center transition-colors",
@@ -633,76 +750,80 @@ export function Overview({ onFileSelect, onFileUpload }: OverviewProps) {
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <p className="font-semibold text-foreground truncate">{carName}</p>
+                                <p className="font-semibold text-foreground truncate">{group.carName}</p>
                               </div>
                               <div className="flex items-center gap-3 mt-1 flex-wrap">
-                                <p className="text-xs text-muted-foreground truncate font-mono opacity-70">{fileInfo.name}</p>
-                                {lapCount !== undefined && (
+                                <p className="text-xs text-muted-foreground truncate font-mono opacity-70">{sessionIdLabel}</p>
+                                {sessionCountLabel && (
+                                  <span className="text-xs text-muted-foreground/70 flex items-center gap-1">
+                                    <Flag className="h-3 w-3" />
+                                    {sessionCountLabel}
+                                  </span>
+                                )}
+                                {group.totalLaps > 0 && (
                                   <span className="text-xs text-muted-foreground/70 flex items-center gap-1">
                                     <Layers className="h-3 w-3" />
-                                    {lapCount} {lapCount === 1 ? "lap" : "laps"}
+                                    {group.totalLaps} {group.totalLaps === 1 ? "lap" : "laps"}
                                   </span>
                                 )}
                               </div>
                             </div>
                           </div>
 
-                          {/* Track & Location Info */}
                           <div className="flex flex-col gap-1 min-w-0">
                             <div className="flex items-center gap-2 text-sm text-foreground/80">
                               <MapPin className="h-3.5 w-3.5 text-muted-foreground/70 flex-shrink-0" />
-                              <span className="truncate">{trackDisplay}</span>
+                              <span className="truncate">{group.trackDisplay}</span>
                             </div>
-                            {location && (
+                            {group.location && (
                               <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
                                 <Navigation className="h-3 w-3 text-muted-foreground/50 flex-shrink-0" />
-                                <span className="truncate">{location}</span>
+                                <span className="truncate">{group.location}</span>
                               </div>
                             )}
                           </div>
 
-                          {/* Session Type */}
-                          <div className="hidden md:flex items-center">
-                            {sessionType ? (
-                              <Badge className={cn("h-6 border", getSessionTypeColor(fileInfo.metadata.sessionType, fileInfo.metadata.weekendInfo?.sessionType))}>
-                                <Flag className="h-3 w-3 mr-1.5" />
-                                {sessionType}
-                              </Badge>
+                          <div className="hidden md:flex items-center gap-2 flex-wrap">
+                            {group.sessionTypes.length > 0 ? (
+                              group.sessionTypes.map((sessionType) => (
+                                <Badge key={sessionType} className={cn("h-6 border", getSessionTypeColor(sessionType))}>
+                                  <Flag className="h-3 w-3 mr-1.5" />
+                                  {sessionType}
+                                </Badge>
+                              ))
                             ) : (
-                              <span className="text-xs text-muted-foreground/50">—</span>
+                              <span className="text-xs text-muted-foreground/50">-</span>
                             )}
                           </div>
 
-                          {/* Laps & Records */}
                           <div className="hidden md:flex flex-col gap-1 text-xs text-muted-foreground">
-                            {lapCount !== undefined && (
+                            {group.totalLaps > 0 ? (
                               <div className="flex items-center gap-1.5">
                                 <Layers className="h-3 w-3 text-muted-foreground/70" />
-                                <span>{lapCount} {lapCount === 1 ? "lap" : "laps"}</span>
+                                <span>{group.totalLaps} {group.totalLaps === 1 ? "lap" : "laps"}</span>
                               </div>
+                            ) : (
+                              <span className="text-muted-foreground/50">-</span>
                             )}
-                            {recordCount !== undefined && (
+                            {group.totalRecords > 0 ? (
                               <div className="flex items-center gap-1.5">
                                 <Gauge className="h-3 w-3 text-muted-foreground/70" />
-                                <span>{recordCount.toLocaleString()} records</span>
+                                <span>{group.totalRecords.toLocaleString()} records</span>
                               </div>
-                            )}
-                            {lapCount === undefined && recordCount === undefined && (
-                              <span className="text-muted-foreground/50">—</span>
+                            ) : (
+                              <span className="text-muted-foreground/50">-</span>
                             )}
                           </div>
 
-                          {/* Date */}
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Calendar className="h-3.5 w-3.5 flex-shrink-0" />
-                            <span className="truncate">{displayDate}</span>
+                            <span className="truncate">{group.displayDate}</span>
                           </div>
 
-                          {/* Arrow */}
                           <div className="flex justify-end items-center gap-2">
-                            {resultsLink && (
+                            {group.resultsLink && (
                               <a
-                                href={resultsLink}
+                                href={group.resultsLink}
                                 target="_blank"
                                 rel="noreferrer"
                                 onClick={(event) => event.stopPropagation()}

@@ -24,6 +24,7 @@ import { createCursorStore, CursorStoreContext } from "@/lib/cursorStore"
 import { formatLapTime } from "@/lib/telemetry-utils"
 import { parseSectorBoundaries, calculateSectorTimes } from "@/lib/sector-utils"
 import type { ChartSeries } from "@/components/telemetry/types"
+import type { LapAnalysisProps } from "@/components/types"
 import { TelemetrySourceInput } from "@/components/lap-analysis/TelemetrySourceInput"
 import { LapSelector } from "@/components/lap-analysis/LapSelector"
 import { SectorTimesTable } from "@/components/lap-analysis/SectorTimesTable"
@@ -74,12 +75,7 @@ const DEFAULT_CHART_ORDER: ChartId[] = [
   CHART_IDS.TIRE_WEAR,
 ]
 
-interface LapAnalysisProps {
-  initialFile?: File | null
-  onBackToStart?: () => void
-}
-
-export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {}) {
+export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = {}) {
   // Create cursor store once - bypasses React state for performance
   const cursorStoreRef = useRef<ReturnType<typeof createCursorStore> | null>(null)
   if (!cursorStoreRef.current) {
@@ -97,6 +93,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
   const [ibtError, setIbtError] = useState<string | null>(null)
   const [sectorBoundaries, setSectorBoundaries] = useState<SectorBoundary[]>([])
   const [weekendInfo, setWeekendInfo] = useState<IbtWeekendInfo | null>(null)
+  const [subSessionIds, setSubSessionIds] = useState<number[]>([])
   const [sessionsByNum, setSessionsByNum] = useState<Record<number, import("@/lib/ibt").IbtSessionInfo>>({})
   const [driverCarIdx, setDriverCarIdx] = useState<number | null>(null)
 
@@ -182,506 +179,593 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
     cursorStore.setDistance(null)
   }, [cursorStore])
 
-  const loadIbt = useCallback(
-    async (blob: Blob, label: string) => {
-      setIbtLoading(true)
-      setIbtError(null)
+  const parseIbtFile = useCallback(
+    async (file: File) => {
       setIbtProgress({ processedRecords: 0, totalRecords: 1 })
-      try {
-        const header = await readIbtHeader(blob)
-        const vars = await readIbtVarHeaders(blob, header)
+      const header = await readIbtHeader(file)
+      const vars = await readIbtVarHeaders(file, header)
 
-        // Parse session YAML to extract sector boundaries and session information
-        const sessionYaml = await readIbtSessionInfoYaml(blob, header)
-        const sectors = parseSectorBoundaries(sessionYaml)
-        setSectorBoundaries(sectors)
-        
-        // Parse session information from YAML
-        const parsedSessions = parseSessionsFromYaml(sessionYaml)
-        setSessionsByNum(parsedSessions)
-        
-        // Extract driver's CarIdx
-        const driverCarIdxMatch = sessionYaml.match(/DriverCarIdx:\s*(\d+)/)
-        const carIdx = driverCarIdxMatch ? parseInt(driverCarIdxMatch[1], 10) : null
-        setDriverCarIdx(carIdx)
-        
-        // Parse WeekendInfo metadata from YAML (needed for fallback session type)
-        const weekendInfoData = parseWeekendInfoFromYaml(sessionYaml)
-        setWeekendInfo(weekendInfoData)
-        
-        // Check if SessionNum variable exists in the telemetry file
-        const hasSessionNum = vars.some(v => v.name.toLowerCase() === "sessionnum")
-        const hasPlayerCarIdx = vars.some(v => v.name.toLowerCase() === "playercaridx")
+      const sessionYaml = await readIbtSessionInfoYaml(file, header)
+      const sectors = parseSectorBoundaries(sessionYaml)
+      const parsedSessions = parseSessionsFromYaml(sessionYaml)
 
-        const recordCount =
-          header.diskSubHeader?.recordCount ??
-          Math.floor((blob.size - (header.sessionInfoOffset + header.sessionInfoLen)) / header.bufLen)
+      const driverCarIdxMatch = sessionYaml.match(/DriverCarIdx:\s*(\d+)/)
+      const carIdx = driverCarIdxMatch ? parseInt(driverCarIdxMatch[1], 10) : null
 
-        // Aim for ~10k sparse samples across the whole file (enough to build a clean lap trace).
-        const targetPoints = 10_000
-        const stride = Math.max(1, Math.floor(recordCount / targetPoints))
+      const weekendInfoData = parseWeekendInfoFromYaml(sessionYaml)
 
-        const varNames = [
-          "SessionTime",
-          "Lap",
-          "LapDist",
-          "Speed",
-          "RPM",
-          "Gear",
-          "Throttle",
-          "Brake",
-          "BrakeABSactive",
-          "SteeringWheelAngle",
-          "Lat",
-          "Lon",
-          "LFtempM",
-          "RFtempM",
-          "LRtempM",
-          "RRtempM",
-          "LFpressure",
-          "RFpressure",
-          "LRpressure",
-          "RRpressure",
-          "LFwearM",
-          "RFwearM",
-          "LRwearM",
-          "RRwearM",
-        ]
-        
-        // Add SessionNum if available
-        if (hasSessionNum) {
-          varNames.push("SessionNum")
+      const hasSessionNum = vars.some(v => v.name.toLowerCase() === "sessionnum")
+      const hasPlayerCarIdx = vars.some(v => v.name.toLowerCase() === "playercaridx")
+
+      const recordCount =
+        header.diskSubHeader?.recordCount ??
+        Math.floor((file.size - (header.sessionInfoOffset + header.sessionInfoLen)) / header.bufLen)
+
+      const targetPoints = 10_000
+      const stride = Math.max(1, Math.floor(recordCount / targetPoints))
+
+      const varNames = [
+        "SessionTime",
+        "Lap",
+        "LapDist",
+        "Speed",
+        "RPM",
+        "Gear",
+        "Throttle",
+        "Brake",
+        "BrakeABSactive",
+        "SteeringWheelAngle",
+        "Lat",
+        "Lon",
+        "LFtempM",
+        "RFtempM",
+        "LRtempM",
+        "RRtempM",
+        "LFpressure",
+        "RFpressure",
+        "LRpressure",
+        "RRpressure",
+        "LFwearM",
+        "RFwearM",
+        "LRwearM",
+        "RRwearM",
+      ]
+
+      if (hasSessionNum) {
+        varNames.push("SessionNum")
+      }
+
+      if (hasPlayerCarIdx) {
+        varNames.push("PlayerCarIdx")
+      }
+
+      const rows = await readIbtSamples(file, header, vars, {
+        varNames,
+        stride,
+        onProgress: (p) => setIbtProgress(p),
+      })
+
+      const num = (v: IbtValue): number | null =>
+        typeof v === "number" && Number.isFinite(v) ? v : null
+
+      const lapTimesFromCrossings: Record<number, number> = {}
+      const makeLapKey = (lap: number, sessionNum: number | null) =>
+        hasSessionNum && sessionNum != null ? sessionNum * LAP_SESSION_KEY_MULTIPLIER + lap : lap
+
+      const transitionVarNames = ["SessionTime", "Lap", "LapDist"]
+      if (hasPlayerCarIdx) {
+        transitionVarNames.push("PlayerCarIdx")
+      }
+      if (hasSessionNum) {
+        transitionVarNames.push("SessionNum")
+      }
+
+      const allSamples = stride > 1
+        ? await readIbtSamples(file, header, vars, {
+            varNames: transitionVarNames,
+            stride: 1,
+            onProgress: (p) => setIbtProgress(p),
+          })
+        : rows.filter((r) => {
+            if (hasPlayerCarIdx && carIdx != null) {
+              const rowCarIdx = num(r["PlayerCarIdx"])
+              if (rowCarIdx == null || rowCarIdx !== carIdx) return false
+            }
+            return true
+          }).map((r) => {
+            const result: Record<string, IbtValue> = {}
+            for (const vn of transitionVarNames) {
+              result[vn] = r[vn]
+            }
+            return result
+          })
+
+      const filteredSamples = allSamples.filter((r) => {
+        if (hasPlayerCarIdx && carIdx != null) {
+          const rowCarIdx = num(r["PlayerCarIdx"])
+          if (rowCarIdx == null || rowCarIdx !== carIdx) return false
         }
-        
-        if (hasPlayerCarIdx) {
-          varNames.push("PlayerCarIdx")
-        }
+        return true
+      })
 
-        const rows = await readIbtSamples(blob, header, vars, {
-          varNames,
-          stride,
-          onProgress: (p) => setIbtProgress(p),
-        })
+      const sflCrossings: Array<{ lapKey: number; lap: number; sessionNum: number | null; sessionTime: number }> = []
 
-        const num = (v: IbtValue): number | null =>
-          typeof v === "number" && Number.isFinite(v) ? v : null
+      for (let i = 1; i < filteredSamples.length; i++) {
+        const prevSample = filteredSamples[i - 1]
+        const currSample = filteredSamples[i]
 
-        const lapTimesFromCrossings: Record<number, number> = {}
-        const makeLapKey = (lap: number, sessionNum: number | null) =>
-          hasSessionNum && sessionNum != null ? sessionNum * LAP_SESSION_KEY_MULTIPLIER + lap : lap
-        
-        const transitionVarNames = ["SessionTime", "Lap", "LapDist"]
-        if (hasPlayerCarIdx) {
-          transitionVarNames.push("PlayerCarIdx")
-        }
-        if (hasSessionNum) {
-          transitionVarNames.push("SessionNum")
-        }
-        
-        const allSamples = stride > 1
-          ? await readIbtSamples(blob, header, vars, {
-              varNames: transitionVarNames,
-              stride: 1,
-              onProgress: (p) => setIbtProgress(p),
-            })
-          : rows.filter((r) => {
-              if (hasPlayerCarIdx && carIdx != null) {
-                const rowCarIdx = num(r["PlayerCarIdx"])
-                if (rowCarIdx == null || rowCarIdx !== carIdx) return false
-              }
-              return true
-            }).map((r) => {
-              const result: Record<string, IbtValue> = {}
-              for (const vn of transitionVarNames) {
-                result[vn] = r[vn]
-              }
-              return result
-            })
+        const prevLap = num(prevSample["Lap"])
+        const currLap = num(currSample["Lap"])
+        const prevSessionTime = num(prevSample["SessionTime"])
+        const currSessionTime = num(currSample["SessionTime"])
+        const prevLapDist = num(prevSample["LapDist"])
+        const currLapDist = num(currSample["LapDist"])
+        const prevSessionNum = hasSessionNum ? num(prevSample["SessionNum"]) : null
+        const currSessionNum = hasSessionNum ? num(currSample["SessionNum"]) : null
 
-        const filteredSamples = allSamples.filter((r) => {
-          if (hasPlayerCarIdx && carIdx != null) {
-            const rowCarIdx = num(r["PlayerCarIdx"])
-            if (rowCarIdx == null || rowCarIdx !== carIdx) return false
-          }
-          return true
-        })
+        if (prevLap == null || currLap == null || prevSessionTime == null || currSessionTime == null ||
+            prevLapDist == null || currLapDist == null) continue
+        if (hasSessionNum && (prevSessionNum == null || currSessionNum == null || prevSessionNum !== currSessionNum)) continue
+        if (currLap <= 0) continue
 
-        const sflCrossings: Array<{ lapKey: number; lap: number; sessionNum: number | null; sessionTime: number }> = []
-        
-        for (let i = 1; i < filteredSamples.length; i++) {
-          const prevSample = filteredSamples[i - 1]
-          const currSample = filteredSamples[i]
-          
-          const prevLap = num(prevSample["Lap"])
-          const currLap = num(currSample["Lap"])
-          const prevSessionTime = num(prevSample["SessionTime"])
-          const currSessionTime = num(currSample["SessionTime"])
-          const prevLapDist = num(prevSample["LapDist"])
-          const currLapDist = num(currSample["LapDist"])
-          const prevSessionNum = hasSessionNum ? num(prevSample["SessionNum"]) : null
-          const currSessionNum = hasSessionNum ? num(currSample["SessionNum"]) : null
-          
-          if (prevLap == null || currLap == null || prevSessionTime == null || currSessionTime == null || 
-              prevLapDist == null || currLapDist == null) continue
-          if (hasSessionNum && (prevSessionNum == null || currSessionNum == null || prevSessionNum !== currSessionNum)) continue
-          if (currLap <= 0) continue
-          
-          if (prevLapDist != null && currLapDist != null && 
-              prevLapDist > currLapDist && currLapDist < 50 && prevLapDist > 100) {
-            const t = (0 - prevLapDist) / (currLapDist - prevLapDist)
-            if (Number.isFinite(t)) {
-              const interpolatedTime = prevSessionTime + t * (currSessionTime - prevSessionTime)
-              if (Number.isFinite(interpolatedTime) && interpolatedTime > 0) {
-                const lapKey = makeLapKey(currLap, currSessionNum)
-                sflCrossings.push({ 
-                  lapKey,
-                  lap: currLap, 
-                  sessionNum: currSessionNum,
-                  sessionTime: interpolatedTime
-                })
-              }
+        if (prevLapDist != null && currLapDist != null &&
+            prevLapDist > currLapDist && currLapDist < 50 && prevLapDist > 100) {
+          const t = (0 - prevLapDist) / (currLapDist - prevLapDist)
+          if (Number.isFinite(t)) {
+            const interpolatedTime = prevSessionTime + t * (currSessionTime - prevSessionTime)
+            if (Number.isFinite(interpolatedTime) && interpolatedTime > 0) {
+              const lapKey = makeLapKey(currLap, currSessionNum)
+              sflCrossings.push({
+                lapKey,
+                lap: currLap,
+                sessionNum: currSessionNum,
+                sessionTime: interpolatedTime
+              })
             }
           }
         }
-        
-        for (let i = 1; i < sflCrossings.length; i++) {
-          const prev = sflCrossings[i - 1]!
-          const curr = sflCrossings[i]!
-          
-          if (curr.lap >= prev.lap && curr.lap > 0) {
-            const lapTime = curr.sessionTime - prev.sessionTime
-            if (lapTime > 60 && lapTime < 300) {
-              const targetLap = curr.lap === prev.lap ? curr.lap : prev.lap
-              if (targetLap > 0) {
-                const targetLapKey = makeLapKey(targetLap, curr.sessionNum)
-                const existingTime = lapTimesFromCrossings[targetLapKey]
-                if (existingTime == null || lapTime < existingTime) {
-                  lapTimesFromCrossings[targetLapKey] = lapTime
-                }
+      }
+
+      for (let i = 1; i < sflCrossings.length; i++) {
+        const prev = sflCrossings[i - 1]!
+        const curr = sflCrossings[i]!
+
+        if (curr.lap >= prev.lap && curr.lap > 0) {
+          const lapTime = curr.sessionTime - prev.sessionTime
+          if (lapTime > 60 && lapTime < 300) {
+            const targetLap = curr.lap === prev.lap ? curr.lap : prev.lap
+            if (targetLap > 0) {
+              const targetLapKey = makeLapKey(targetLap, curr.sessionNum)
+              const existingTime = lapTimesFromCrossings[targetLapKey]
+              if (existingTime == null || lapTime < existingTime) {
+                lapTimesFromCrossings[targetLapKey] = lapTime
               }
             }
           }
         }
+      }
 
-        const byLap: Record<number, Array<Record<string, IbtValue>>> = {}
-        const lapSessionNums: Record<number, number | null> = {}
-        const lapNumbers: Record<number, number> = {}
-        
-        for (const r of rows) {
-          if (hasPlayerCarIdx && carIdx != null) {
-            const rowCarIdx = num(r["PlayerCarIdx"])
-            if (rowCarIdx == null || rowCarIdx !== carIdx) continue
+      const byLap: Record<number, Array<Record<string, IbtValue>>> = {}
+      const lapSessionNums: Record<number, number | null> = {}
+      const lapNumbers: Record<number, number> = {}
+
+      for (const r of rows) {
+        if (hasPlayerCarIdx && carIdx != null) {
+          const rowCarIdx = num(r["PlayerCarIdx"])
+          if (rowCarIdx == null || rowCarIdx !== carIdx) continue
+        }
+        const lap = num(r["Lap"])
+        if (lap == null) continue
+        const sessionNum = hasSessionNum ? num(r["SessionNum"]) : null
+        const lapKey = makeLapKey(lap, sessionNum)
+        byLap[lapKey] ??= []
+        byLap[lapKey].push(r)
+
+        if (hasSessionNum && lapSessionNums[lapKey] == null) {
+          if (sessionNum != null) {
+            lapSessionNums[lapKey] = sessionNum
           }
-          const lap = num(r["Lap"])
-          if (lap == null) continue
-          const sessionNum = hasSessionNum ? num(r["SessionNum"]) : null
-          const lapKey = makeLapKey(lap, sessionNum)
-          byLap[lapKey] ??= []
-          byLap[lapKey].push(r)
-          
-          // Track SessionNum for this lap (use first non-null value) if available
-          if (hasSessionNum && lapSessionNums[lapKey] == null) {
-            if (sessionNum != null) {
-              lapSessionNums[lapKey] = sessionNum
-            }
-          }
-          if (lapNumbers[lapKey] == null) {
-            lapNumbers[lapKey] = lap
+        }
+        if (lapNumbers[lapKey] == null) {
+          lapNumbers[lapKey] = lap
+        }
+      }
+
+      const lapNums = Object.keys(byLap)
+        .map((x) => Number(x))
+        .filter((x) => Number.isFinite(x))
+        .sort((a, b) => a - b)
+
+      const lapDataByLap: Record<number, IbtLapData> = {}
+
+      for (const lapKey of lapNums) {
+        const lapRows = byLap[lapKey]
+        const lapNumber = lapNumbers[lapKey] ?? lapKey
+        const raw: Array<{
+          sessionTime: number
+          lapDistKm: number
+          speedKmh: number | null
+          throttlePct: number | null
+          brakePct: number | null
+          brakeABSactive: boolean | null
+          gear: number | null
+          rpm: number | null
+          steeringDeg: number | null
+          lat: number | null
+          lon: number | null
+          tireTempLF: number | null
+          tireTempRF: number | null
+          tireTempLR: number | null
+          tireTempRR: number | null
+          tirePressureLF: number | null
+          tirePressureRF: number | null
+          tirePressureLR: number | null
+          tirePressureRR: number | null
+          tireWearLF: number | null
+          tireWearRF: number | null
+          tireWearLR: number | null
+          tireWearRR: number | null
+        }> = []
+
+        for (const r of lapRows) {
+          const sessionTime = num(r["SessionTime"])
+          const lapDistM = num(r["LapDist"])
+          if (sessionTime == null || lapDistM == null) continue
+
+          const speedMs = num(r["Speed"])
+          const rpm = num(r["RPM"])
+          const gear = num(r["Gear"])
+          const throttle = num(r["Throttle"])
+          const brake = num(r["Brake"])
+          const brakeABS = r["BrakeABSactive"]
+          const brakeABSactive = typeof brakeABS === "boolean" ? brakeABS : brakeABS === 1 ? true : brakeABS === 0 ? false : null
+          const steerRad = num(r["SteeringWheelAngle"])
+          const lat = typeof r["Lat"] === "number" && Number.isFinite(r["Lat"]) ? r["Lat"] : null
+          const lon = typeof r["Lon"] === "number" && Number.isFinite(r["Lon"]) ? r["Lon"] : null
+
+          const tireTempLF = num(r["LFtempM"])
+          const tireTempRF = num(r["RFtempM"])
+          const tireTempLR = num(r["LRtempM"])
+          const tireTempRR = num(r["RRtempM"])
+          const tirePressureLF = num(r["LFpressure"])
+          const tirePressureRF = num(r["RFpressure"])
+          const tirePressureLR = num(r["LRpressure"])
+          const tirePressureRR = num(r["RRpressure"])
+          const tireWearLF = num(r["LFwearM"])
+          const tireWearRF = num(r["RFwearM"])
+          const tireWearLR = num(r["LRwearM"])
+          const tireWearRR = num(r["RRwearM"])
+
+          raw.push({
+            sessionTime,
+            lapDistKm: lapDistM / 1000,
+            speedKmh: speedMs != null ? speedMs * 3.6 : null,
+            throttlePct: throttle != null ? throttle * 100 : null,
+            brakePct: brake != null ? brake * 100 : null,
+            brakeABSactive,
+            gear: gear != null ? gear : null,
+            rpm: rpm != null ? rpm : null,
+            steeringDeg: steerRad != null ? (steerRad * 180) / Math.PI : null,
+            lat,
+            lon,
+            tireTempLF,
+            tireTempRF,
+            tireTempLR,
+            tireTempRR,
+            tirePressureLF,
+            tirePressureRF,
+            tirePressureLR,
+            tirePressureRR,
+            tireWearLF,
+            tireWearRF,
+            tireWearLR,
+            tireWearRR,
+          })
+        }
+
+        if (raw.length < 20) continue
+
+        const sortedByTime = [...raw].sort((a, b) => a.sessionTime - b.sessionTime)
+        const minTime = sortedByTime[0]!.sessionTime
+        const minDist = Math.min(...raw.map((p) => p.lapDistKm))
+
+        let lapTimeSec: number
+        const preciseLapTime = lapTimesFromCrossings[lapKey]
+
+        if (preciseLapTime != null && Number.isFinite(preciseLapTime) && preciseLapTime > 60 && preciseLapTime < 300) {
+          lapTimeSec = preciseLapTime
+        } else {
+          const maxTime = Math.max(...raw.map((p) => p.sessionTime))
+          lapTimeSec = maxTime - minTime
+        }
+
+        let sessionNum = hasSessionNum ? (lapSessionNums[lapKey] ?? null) : null
+        let sessionInfo = sessionNum != null ? parsedSessions[sessionNum] : null
+        let sessionType = sessionInfo?.sessionType
+
+        if (sessionInfo?.resultsPositions && carIdx != null) {
+          const carResult = sessionInfo.resultsPositions.find((pos) => pos.carIdx === carIdx)
+          if (carResult && carResult.fastestLap === lapNumber && carResult.fastestTime > 0) {
+            lapTimeSec = carResult.fastestTime
           }
         }
 
-        const lapNums = Object.keys(byLap)
-          .map((x) => Number(x))
-          .filter((x) => Number.isFinite(x))
-          .sort((a, b) => a - b)
+        const points: IbtLapPoint[] = raw
+          .map((p) => ({
+            distanceKm: p.lapDistKm - minDist,
+            timeSec: p.sessionTime - minTime,
+            speedKmh: p.speedKmh,
+            throttlePct: p.throttlePct,
+            brakePct: p.brakePct,
+            brakeABSactive: p.brakeABSactive,
+            gear: p.gear,
+            rpm: p.rpm,
+            steeringDeg: p.steeringDeg,
+            lat: p.lat,
+            lon: p.lon,
+            tireTempLF: p.tireTempLF,
+            tireTempRF: p.tireTempRF,
+            tireTempLR: p.tireTempLR,
+            tireTempRR: p.tireTempRR,
+            tirePressureLF: p.tirePressureLF,
+            tirePressureRF: p.tirePressureRF,
+            tirePressureLR: p.tirePressureLR,
+            tirePressureRR: p.tirePressureRR,
+            tireWearLF: p.tireWearLF,
+            tireWearRF: p.tireWearRF,
+            tireWearLR: p.tireWearLR,
+            tireWearRR: p.tireWearRR,
+          }))
+          .filter((p) => Number.isFinite(p.distanceKm) && p.distanceKm >= 0 && Number.isFinite(p.timeSec) && p.timeSec >= 0)
 
-        const lapDataByLap: Record<number, IbtLapData> = {}
-        
-        for (const lapKey of lapNums) {
-          const lapRows = byLap[lapKey]
-          const lapNumber = lapNumbers[lapKey] ?? lapKey
-          const raw: Array<{
-            sessionTime: number
-            lapDistKm: number
-            speedKmh: number | null
-            throttlePct: number | null
-            brakePct: number | null
-            brakeABSactive: boolean | null
-            gear: number | null
-            rpm: number | null
-            steeringDeg: number | null
-            lat: number | null
-            lon: number | null
-            tireTempLF: number | null
-            tireTempRF: number | null
-            tireTempLR: number | null
-            tireTempRR: number | null
-            tirePressureLF: number | null
-            tirePressureRF: number | null
-            tirePressureLR: number | null
-            tirePressureRR: number | null
-            tireWearLF: number | null
-            tireWearRF: number | null
-            tireWearLR: number | null
-            tireWearRR: number | null
-          }> = []
+        if (points.length < 20) continue
 
-          for (const r of lapRows) {
-            const sessionTime = num(r["SessionTime"])
-            const lapDistM = num(r["LapDist"])
-            if (sessionTime == null || lapDistM == null) continue
+        const byDist = [...points].sort((a, b) => a.distanceKm - b.distanceKm)
+        const byTime = [...points].sort((a, b) => a.timeSec - b.timeSec)
+        const distanceKm = Math.max(...byDist.map((p) => p.distanceKm))
 
-            const speedMs = num(r["Speed"])
-            const rpm = num(r["RPM"])
-            const gear = num(r["Gear"])
-            const throttle = num(r["Throttle"])
-            const brake = num(r["Brake"])
-            const brakeABS = r["BrakeABSactive"]
-            const brakeABSactive = typeof brakeABS === "boolean" ? brakeABS : brakeABS === 1 ? true : brakeABS === 0 ? false : null
-            const steerRad = num(r["SteeringWheelAngle"])
-            const lat = typeof r["Lat"] === "number" && Number.isFinite(r["Lat"]) ? r["Lat"] : null
-            const lon = typeof r["Lon"] === "number" && Number.isFinite(r["Lon"]) ? r["Lon"] : null
+        const sectorTimes = calculateSectorTimes(
+          { byDist, byTime, lapNumber, lapTimeSec, distanceKm, points: points.length, sectorTimes: [] },
+          sectors,
+        )
 
-            // Tire data
-            const tireTempLF = num(r["LFtempM"])
-            const tireTempRF = num(r["RFtempM"])
-            const tireTempLR = num(r["LRtempM"])
-            const tireTempRR = num(r["RRtempM"])
-            const tirePressureLF = num(r["LFpressure"])
-            const tirePressureRF = num(r["RFpressure"])
-            const tirePressureLR = num(r["LRpressure"])
-            const tirePressureRR = num(r["RRpressure"])
-            const tireWearLF = num(r["LFwearM"])
-            const tireWearRF = num(r["RFwearM"])
-            const tireWearLR = num(r["LRwearM"])
-            const tireWearRR = num(r["RRwearM"])
+        if (!sessionType && Object.keys(parsedSessions).length > 0) {
+          const sessionEntries = Object.values(parsedSessions).sort((a, b) => a.sessionNum - b.sessionNum)
 
-            raw.push({
-              sessionTime,
-              lapDistKm: lapDistM / 1000,
-              speedKmh: speedMs != null ? speedMs * 3.6 : null,
-              throttlePct: throttle != null ? throttle * 100 : null,
-              brakePct: brake != null ? brake * 100 : null,
-              brakeABSactive,
-              gear: gear != null ? gear : null,
-              rpm: rpm != null ? rpm : null,
-              steeringDeg: steerRad != null ? (steerRad * 180) / Math.PI : null,
-              lat,
-              lon,
-              tireTempLF,
-              tireTempRF,
-              tireTempLR,
-              tireTempRR,
-              tirePressureLF,
-              tirePressureRF,
-              tirePressureLR,
-              tirePressureRR,
-              tireWearLF,
-              tireWearRF,
-              tireWearLR,
-              tireWearRR,
-            })
+          if (sessionNum != null && !sessionInfo) {
+            sessionInfo = parsedSessions[sessionNum]
+            sessionType = sessionInfo?.sessionType
           }
 
-          if (raw.length < 20) continue
+          if (!sessionType && sessionEntries.length > 0) {
+            if (sessionEntries.length > 1) {
+              let cumulativeLaps = 0
+              let foundSession = false
 
-          const sortedByTime = [...raw].sort((a, b) => a.sessionTime - b.sessionTime)
-          const minTime = sortedByTime[0]!.sessionTime
-          const minDist = Math.min(...raw.map((p) => p.lapDistKm))
-
-          let lapTimeSec: number
-          const preciseLapTime = lapTimesFromCrossings[lapKey]
-
-          if (preciseLapTime != null && Number.isFinite(preciseLapTime) && preciseLapTime > 60 && preciseLapTime < 300) {
-            lapTimeSec = preciseLapTime
-          } else {
-            const maxTime = Math.max(...raw.map((p) => p.sessionTime))
-            lapTimeSec = maxTime - minTime
-          }
-          
-          // Get session information for this lap
-          let sessionNum = hasSessionNum ? (lapSessionNums[lapKey] ?? null) : null
-          let sessionInfo = sessionNum != null ? parsedSessions[sessionNum] : null
-          let sessionType = sessionInfo?.sessionType
-          
-          // Use official lap time from ResultsPositions if available (most accurate) - only for fastest lap
-          if (sessionInfo?.resultsPositions && carIdx != null) {
-            const carResult = sessionInfo.resultsPositions.find((pos) => pos.carIdx === carIdx)
-            if (carResult && carResult.fastestLap === lapNumber && carResult.fastestTime > 0) {
-              lapTimeSec = carResult.fastestTime
-            }
-          }
-
-          const points: IbtLapPoint[] = raw
-            .map((p) => ({
-              distanceKm: p.lapDistKm - minDist,
-              timeSec: p.sessionTime - minTime,
-              speedKmh: p.speedKmh,
-              throttlePct: p.throttlePct,
-              brakePct: p.brakePct,
-              brakeABSactive: p.brakeABSactive,
-              gear: p.gear,
-              rpm: p.rpm,
-              steeringDeg: p.steeringDeg,
-              lat: p.lat,
-              lon: p.lon,
-              tireTempLF: p.tireTempLF,
-              tireTempRF: p.tireTempRF,
-              tireTempLR: p.tireTempLR,
-              tireTempRR: p.tireTempRR,
-              tirePressureLF: p.tirePressureLF,
-              tirePressureRF: p.tirePressureRF,
-              tirePressureLR: p.tirePressureLR,
-              tirePressureRR: p.tirePressureRR,
-              tireWearLF: p.tireWearLF,
-              tireWearRF: p.tireWearRF,
-              tireWearLR: p.tireWearLR,
-              tireWearRR: p.tireWearRR,
-            }))
-            .filter((p) => Number.isFinite(p.distanceKm) && p.distanceKm >= 0 && Number.isFinite(p.timeSec) && p.timeSec >= 0)
-
-          if (points.length < 20) continue
-
-          const byDist = [...points].sort((a, b) => a.distanceKm - b.distanceKm)
-          const byTime = [...points].sort((a, b) => a.timeSec - b.timeSec)
-          const distanceKm = Math.max(...byDist.map((p) => p.distanceKm))
-
-          // Calculate sector times
-          const sectorTimes = calculateSectorTimes(
-            { byDist, byTime, lapNumber, lapTimeSec, distanceKm, points: points.length, sectorTimes: [] },
-            sectors,
-          )
-
-          // If we don't have SessionNum for this lap, try to infer it based on session order and lap numbers
-          if (!sessionType && Object.keys(parsedSessions).length > 0) {
-            const sessionEntries = Object.values(parsedSessions).sort((a, b) => a.sessionNum - b.sessionNum)
-            
-            // If we have SessionNum but no matching session, try to find the closest session
-            if (sessionNum != null && !sessionInfo) {
-              // SessionNum exists but doesn't match any parsed session - use the session with that number if it exists
-              sessionInfo = parsedSessions[sessionNum]
-              sessionType = sessionInfo?.sessionType
-            }
-            
-            // If still no session type, try to infer based on session order and SessionLaps
-            // Typical order: Practice (SessionNum 0) -> Qualifying (SessionNum 1) -> Race (SessionNum 2)
-            if (!sessionType && sessionEntries.length > 0) {
-              // If we have multiple sessions, try to infer based on lap number and session metadata
-              if (sessionEntries.length > 1) {
-                // Try to use SessionLaps to determine which session this lap belongs to
-                let cumulativeLaps = 0
-                let foundSession = false
-                
-                for (const session of sessionEntries) {
-                  const sessionLaps = session.sessionLaps
-                  if (sessionLaps != null && typeof sessionLaps === 'number') {
-                    // If this lap falls within this session's lap count
-                    if (lapNumber > cumulativeLaps && lapNumber <= cumulativeLaps + sessionLaps) {
-                      sessionInfo = session
-                      sessionType = session.sessionType
-                      sessionNum = session.sessionNum ?? null
-                      foundSession = true
-                      break
-                    }
-                    cumulativeLaps += sessionLaps
+              for (const session of sessionEntries) {
+                const sessionLaps = session.sessionLaps
+                if (sessionLaps != null && typeof sessionLaps === 'number') {
+                  if (lapNumber > cumulativeLaps && lapNumber <= cumulativeLaps + sessionLaps) {
+                    sessionInfo = session
+                    sessionType = session.sessionType
+                    sessionNum = session.sessionNum ?? null
+                    foundSession = true
+                    break
                   }
+                  cumulativeLaps += sessionLaps
                 }
-                
-                // If SessionLaps didn't help, use heuristic based on lap order
-                if (!foundSession) {
-                  const totalLaps = lapNums.length
-                  const lapIndex = lapNums.indexOf(lapKey)
-                  const lapRatio = totalLaps > 0 ? lapIndex / totalLaps : 0
-                  
-                  // Map lap position to session (earlier laps -> earlier sessions)
-                  const sessionIndex = Math.min(
-                    Math.floor(lapRatio * sessionEntries.length),
-                    sessionEntries.length - 1
-                  )
-                  sessionInfo = sessionEntries[sessionIndex]
-                  sessionType = sessionInfo?.sessionType
-                  sessionNum = sessionInfo?.sessionNum ?? null
-                }
-              } else {
-                // Only one session, use it
-                sessionInfo = sessionEntries[0]
+              }
+
+              if (!foundSession) {
+                const totalLaps = lapNums.length
+                const lapIndex = lapNums.indexOf(lapKey)
+                const lapRatio = totalLaps > 0 ? lapIndex / totalLaps : 0
+
+                const sessionIndex = Math.min(
+                  Math.floor(lapRatio * sessionEntries.length),
+                  sessionEntries.length - 1
+                )
+                sessionInfo = sessionEntries[sessionIndex]
                 sessionType = sessionInfo?.sessionType
                 sessionNum = sessionInfo?.sessionNum ?? null
               }
+            } else {
+              sessionInfo = sessionEntries[0]
+              sessionType = sessionInfo?.sessionType
+              sessionNum = sessionInfo?.sessionNum ?? null
             }
           }
-          
-          // Final fallback: use WeekendInfo EventType only if we truly have no session information
-          // But prefer to leave as undefined rather than defaulting everything to Race
-          if (!sessionType && weekendInfoData?.sessionType && Object.keys(parsedSessions).length === 0) {
-            sessionType = weekendInfoData.sessionType
-          }
+        }
 
-          lapDataByLap[lapKey] = {
-            byDist,
-            byTime,
-            lapNumber,
-            lapTimeSec,
-            distanceKm,
-            points: points.length,
-            sectorTimes,
-            sessionNum: sessionNum ?? undefined,
-            sessionType: sessionType || undefined,
+        if (!sessionType && weekendInfoData?.sessionType && Object.keys(parsedSessions).length === 0) {
+          sessionType = weekendInfoData.sessionType
+        }
+
+        lapDataByLap[lapKey] = {
+          byDist,
+          byTime,
+          lapNumber,
+          lapTimeSec,
+          distanceKm,
+          points: points.length,
+          sectorTimes,
+          sessionNum: sessionNum ?? undefined,
+          sessionType: sessionType || undefined,
+        }
+      }
+
+      const allLaps = Object.keys(lapDataByLap)
+        .map((x) => Number(x))
+        .filter((x) => Number.isFinite(x))
+        .sort((a, b) => a - b)
+
+      if (allLaps.length === 0) {
+        throw new Error("Could not find usable laps in this .ibt (missing SessionTime/Lap/LapDist?)")
+      }
+
+      const maxDist = Math.max(...allLaps.map((lap) => lapDataByLap[lap]!.distanceKm))
+      const completionThreshold = maxDist * 0.9
+      const completedLaps = allLaps.filter((lap) => {
+        const data = lapDataByLap[lap]!
+        return (
+          data.lapNumber !== 0 &&
+          data.distanceKm >= completionThreshold &&
+          data.lapTimeSec > 0 &&
+          Number.isFinite(data.lapTimeSec)
+        )
+      })
+
+      if (completedLaps.length === 0) {
+        throw new Error("No completed laps found in this .ibt file. All laps appear to be incomplete.")
+      }
+
+      const completedLapData: Record<number, IbtLapData> = {}
+      for (const lap of completedLaps) {
+        completedLapData[lap] = lapDataByLap[lap]!
+      }
+
+      return {
+        lapDataByLap: completedLapData,
+        laps: completedLaps,
+        sectorBoundaries: sectors,
+        weekendInfo: weekendInfoData,
+        sessionsByNum: parsedSessions,
+        driverCarIdx: carIdx,
+        sourceLabel: `${file.name} (stride ${stride}, tickRate ${header.tickRate})`,
+      }
+    },
+    [],
+  )
+
+  const loadIbtFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return
+      setIbtLoading(true)
+      setIbtError(null)
+      try {
+        const parsedFiles: Array<Awaited<ReturnType<typeof parseIbtFile>>> = []
+        const loadErrors: string[] = []
+
+        for (const file of files) {
+          try {
+            const parsed = await parseIbtFile(file)
+            parsedFiles.push(parsed)
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            loadErrors.push(`${file.name}: ${msg}`)
           }
         }
 
-        const allLaps = Object.keys(lapDataByLap)
-          .map((x) => Number(x))
-          .filter((x) => Number.isFinite(x))
-          .sort((a, b) => a - b)
-
-        if (allLaps.length === 0) {
-          throw new Error("Could not find usable laps in this .ibt (missing SessionTime/Lap/LapDist?)")
+        if (parsedFiles.length === 0) {
+          throw new Error(loadErrors[0] ?? "Failed to load telemetry files.")
         }
 
-        // Find the maximum distance across all laps (approximates track length)
-        const maxDist = Math.max(...allLaps.map((lap) => lapDataByLap[lap]!.distanceKm))
+        const formatSessionLabel = (sessionType?: string) => {
+          if (!sessionType) return null
+          const normalized = sessionType.toLowerCase().trim()
+          if (normalized.includes("race")) return "Race"
+          if (normalized.includes("qualify")) return "Qualifying"
+          if (normalized.includes("practice")) return "Practice"
+          if (normalized.includes("warmup")) return "Warmup"
+          if (normalized.includes("test")) return "Testing"
+          return sessionType.charAt(0).toUpperCase() + sessionType.slice(1).toLowerCase()
+        }
 
-        // Filter to only completed laps:
-        // - Must be at least 90% of the maximum distance (indicates full lap)
-        // - Must have a valid lap time (> 0)
-        // - Exclude lap 0 (typically incomplete)
-        const completionThreshold = maxDist * 0.9
-        const completedLaps = allLaps.filter((lap) => {
-          const data = lapDataByLap[lap]!
-          return (
-            data.lapNumber !== 0 &&
-            data.distanceKm >= completionThreshold &&
-            data.lapTimeSec > 0 &&
-            Number.isFinite(data.lapTimeSec)
-          )
+        const sessionTypeOrder = (sessionType: string) => {
+          const normalized = sessionType.toLowerCase()
+          if (normalized.includes("race")) return 0
+          if (normalized.includes("qualify")) return 1
+          if (normalized.includes("practice")) return 2
+          if (normalized.includes("warmup")) return 3
+          if (normalized.includes("test")) return 4
+          return 5
+        }
+
+        let offset = 0
+        const combinedLapData: Record<number, IbtLapData> = {}
+        const combinedLaps: number[] = []
+        const sessionTypes = new Set<string>()
+        const weekendInfos: IbtWeekendInfo[] = []
+        const subSessionIdSet = new Set<number>()
+        let selectedSectorBoundaries: SectorBoundary[] = []
+        let selectedSessionsByNum: Record<number, import("@/lib/ibt").IbtSessionInfo> = {}
+        let selectedDriverCarIdx: number | null = null
+
+        parsedFiles.forEach((parsed) => {
+          if (parsed.sectorBoundaries.length > selectedSectorBoundaries.length) {
+            selectedSectorBoundaries = parsed.sectorBoundaries
+          }
+
+          if (Object.keys(parsed.sessionsByNum).length > Object.keys(selectedSessionsByNum).length) {
+            selectedSessionsByNum = parsed.sessionsByNum
+          }
+
+          if (selectedDriverCarIdx == null && parsed.driverCarIdx != null) {
+            selectedDriverCarIdx = parsed.driverCarIdx
+          }
+
+          if (parsed.weekendInfo) {
+            weekendInfos.push(parsed.weekendInfo)
+            if (parsed.weekendInfo.subSessionID != null) {
+              subSessionIdSet.add(parsed.weekendInfo.subSessionID)
+            }
+          }
+
+          const lapKeys = parsed.laps
+          if (lapKeys.length === 0) return
+          const maxKey = Math.max(...lapKeys)
+
+          for (const lapKey of lapKeys) {
+            const nextKey = lapKey + offset
+            combinedLapData[nextKey] = parsed.lapDataByLap[lapKey]!
+            combinedLaps.push(nextKey)
+            const sessionType = parsed.lapDataByLap[lapKey]?.sessionType
+            if (sessionType) sessionTypes.add(sessionType)
+          }
+
+          offset += maxKey + 1
         })
 
-        if (completedLaps.length === 0) {
-          throw new Error("No completed laps found in this .ibt file. All laps appear to be incomplete.")
+        if (combinedLaps.length === 0) {
+          throw new Error("No completed laps found in selected files.")
         }
 
-        // Choose a default reference lap: fastest completed lap
-        const bestLap = completedLaps.reduce((best, lap) => {
-          const a = lapDataByLap[best]!
-          const b = lapDataByLap[lap]!
+        const sortedLaps = combinedLaps.sort((a, b) => a - b)
+        const bestLap = sortedLaps.reduce((best, lap) => {
+          const a = combinedLapData[best]!
+          const b = combinedLapData[lap]!
           return b.lapTimeSec < a.lapTimeSec ? lap : best
-        }, completedLaps[0]!)
+        }, sortedLaps[0]!)
 
-        // Only keep completed laps in the data
-        const completedLapData: Record<number, IbtLapData> = {}
-        for (const lap of completedLaps) {
-          completedLapData[lap] = lapDataByLap[lap]!
-        }
+        const sessionLabels = Array.from(new Set(
+          Array.from(sessionTypes)
+            .map((type) => formatSessionLabel(type))
+            .filter((value): value is string => Boolean(value))
+        )).sort((a, b) => sessionTypeOrder(a) - sessionTypeOrder(b))
 
-        setIbtLapDataByLap(completedLapData)
-        setIbtLaps(completedLaps)
+        const sourceLabel = parsedFiles.length === 1
+          ? parsedFiles[0].sourceLabel
+          : `${parsedFiles.length} sessions loaded${sessionLabels.length > 0 ? ` (${sessionLabels.join(", ")})` : ""}`
+
+        const primaryWeekendInfo = weekendInfos.find((info) => info.sessionType?.toLowerCase().includes("race")) ?? weekendInfos[0] ?? null
+
+        setSectorBoundaries(selectedSectorBoundaries)
+        setSessionsByNum(selectedSessionsByNum)
+        setDriverCarIdx(selectedDriverCarIdx)
+        setWeekendInfo(primaryWeekendInfo)
+        setSubSessionIds(Array.from(subSessionIdSet).sort((a, b) => a - b))
+        setIbtLapDataByLap(combinedLapData)
+        setIbtLaps(sortedLaps)
         setSelectedLaps([bestLap])
         setLapColors({ [bestLap]: LAP_COLOR_PALETTE[0] })
-        setIbtSourceLabel(`${label} (stride ${stride}, tickRate ${header.tickRate})`)
+        setIbtSourceLabel(sourceLabel)
         cursorStore.setDistance(null)
         setZoomXMin(null)
         setZoomXMax(null)
+
+        if (loadErrors.length > 0) {
+          setIbtError(`Failed to load ${loadErrors.length} of ${files.length} files.`)
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         setIbtError(msg)
@@ -690,7 +774,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
         setIbtProgress(null)
       }
     },
-    [cursorStore],
+    [cursorStore, parseIbtFile],
   )
 
   const loadSample = useCallback(async () => {
@@ -701,18 +785,19 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
       const res = await fetch(samplePath)
       if (!res.ok) throw new Error(`Failed to fetch sample .ibt: ${res.status} ${res.statusText}`)
       const blob = await res.blob()
-      await loadIbt(blob, "Sample .ibt")
+      const sampleFile = new File([blob], "Sample.ibt", { type: "application/octet-stream" })
+      await loadIbtFiles([sampleFile])
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setIbtError(msg)
     }
-  }, [loadIbt])
+  }, [loadIbtFiles])
 
   useEffect(() => {
-    if (initialFile) {
-      loadIbt(initialFile, initialFile.name)
+    if (initialFiles && initialFiles.length > 0) {
+      loadIbtFiles(initialFiles)
     }
-  }, [initialFile, loadIbt])
+  }, [initialFiles, loadIbtFiles])
 
   const getLapLabel = useCallback(
     (lap: number) => ibtLapDataByLap?.[lap]?.lapNumber ?? lap,
@@ -1169,13 +1254,18 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                 </div>
               </div>
             )}
-            {ibtLapDataByLap && (weekendInfo?.sessionID != null || weekendInfo?.subSessionID != null) && (
+            {ibtLapDataByLap && (weekendInfo?.sessionID != null || subSessionIds.length > 0) && (
               <div className="flex items-center gap-2 text-[10px] font-medium text-muted-foreground bg-muted/20 px-3 py-1.5 rounded-full border border-border/40">
                 {weekendInfo?.sessionID != null && (
                   <span className="font-mono text-foreground/80">SessionID {weekendInfo.sessionID}</span>
                 )}
-                {weekendInfo?.subSessionID != null && (
-                  <span className="font-mono text-foreground/80">SubSessionID {weekendInfo.subSessionID}</span>
+                {subSessionIds.length > 0 && (
+                  <span
+                    className="font-mono text-foreground/80"
+                    title={subSessionIds.length > 1 ? subSessionIds.join(", ") : undefined}
+                  >
+                    {subSessionIds.length === 1 ? `SubSessionID ${subSessionIds[0]}` : `SubSessions ${subSessionIds.length}`}
+                  </span>
                 )}
               </div>
             )}
@@ -1205,7 +1295,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
             <div className="flex flex-col h-full overflow-y-auto p-2 gap-2">
               <div className="rounded-xl border border-border/40 bg-card/30 p-1 shadow-sm">
                 <TelemetrySourceInput
-                  onFileSelect={(file) => loadIbt(file, file.name)}
+                  onFileSelect={(file) => loadIbtFiles([file])}
                   onLoadSample={loadSample}
                   onBackToStart={onBackToStart}
                   loading={ibtLoading}
@@ -1225,15 +1315,6 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                       lapDataByLap={ibtLapDataByLap}
                       onToggleLap={toggleLap}
                       onClearSelection={clearSelectedLaps}
-                    />
-                  </div>
-
-                  <div className="flex-1 rounded-xl border border-border/40 bg-card/30 overflow-hidden shadow-sm hover:shadow-md transition-all">
-                    <SectorTimesTable
-                      selectedLaps={selectedLaps}
-                      lapDataByLap={ibtLapDataByLap}
-                      lapColors={lapColors}
-                      sectorBoundaries={sectorBoundaries}
                     />
                   </div>
 
@@ -1309,11 +1390,19 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                   </div>
                 </div>
 
-                {/* Legend */}
+                {/* Legend and Sector Times */}
                 {ibtLapDataByLap && (
-                  <div className="flex-1 overflow-y-auto p-2">
-                    <div className="h-full rounded-xl border border-border/30 bg-card/20 p-1">
+                  <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
+                    <div className="flex-shrink-0 rounded-xl border border-border/30 bg-card/20 p-1">
                       <LapComparisonLegend
+                        selectedLaps={selectedLaps}
+                        lapDataByLap={ibtLapDataByLap}
+                        lapColors={lapColors}
+                        sectorBoundaries={sectorBoundaries}
+                      />
+                    </div>
+                    <div className="flex-shrink-0 rounded-xl border border-border/30 bg-card/20 overflow-hidden shadow-sm hover:shadow-md transition-all">
+                      <SectorTimesTable
                         selectedLaps={selectedLaps}
                         lapDataByLap={ibtLapDataByLap}
                         lapColors={lapColors}
@@ -1428,7 +1517,7 @@ export function LapAnalysis({ initialFile, onBackToStart }: LapAnalysisProps = {
                           onChange={(e) => {
                             const f = e.currentTarget.files?.[0]
                             if (!f) return
-                            loadIbt(f, f.name)
+                            loadIbtFiles([f])
                           }}
                         />
                       </div>

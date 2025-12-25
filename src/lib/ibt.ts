@@ -480,6 +480,10 @@ export async function readIbtMetadata(blob: Blob): Promise<IbtSessionMetadata> {
   if (weekendInfoMatch) {
     const weekendInfoBlock = weekendInfoMatch[1]
     weekendEventType = extractYamlValue(weekendInfoBlock, "EventType")
+    const seriesID = weekendInfoBlock.match(/SeriesID:\s*(\d+)/)
+    if (seriesID) weekendInfo.seriesID = parseInt(seriesID[1], 10)
+    const seasonID = weekendInfoBlock.match(/SeasonID:\s*(\d+)/)
+    if (seasonID) weekendInfo.seasonID = parseInt(seasonID[1], 10)
     const sessionID = weekendInfoBlock.match(/SessionID:\s*(\d+)/)
     if (sessionID) weekendInfo.sessionID = parseInt(sessionID[1], 10)
     const subSessionID = weekendInfoBlock.match(/SubSessionID:\s*(\d+)/)
@@ -490,6 +494,14 @@ export async function readIbtMetadata(blob: Blob): Promise<IbtSessionMetadata> {
     weekendEventType = extractYamlValue(yaml, "EventType")
   }
   if (weekendEventType) weekendInfo.sessionType = weekendEventType
+  if (weekendInfo.seriesID == null) {
+    const seriesID = yaml.match(/SeriesID:\s*(\d+)/)
+    if (seriesID) weekendInfo.seriesID = parseInt(seriesID[1], 10)
+  }
+  if (weekendInfo.seasonID == null) {
+    const seasonID = yaml.match(/SeasonID:\s*(\d+)/)
+    if (seasonID) weekendInfo.seasonID = parseInt(seasonID[1], 10)
+  }
   if (weekendInfo.sessionID == null) {
     const sessionID = yaml.match(/SessionID:\s*(\d+)/)
     if (sessionID) weekendInfo.sessionID = parseInt(sessionID[1], 10)

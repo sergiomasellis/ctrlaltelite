@@ -4,11 +4,15 @@ import { Overview } from "@/components/Overview"
 import { TitleBar } from "@/components/TitleBar"
 
 export function App() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<File[] | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFileSelect = useCallback((file: File) => {
-    setSelectedFile(file)
+    setSelectedFiles([file])
+  }, [])
+
+  const handleFilesSelect = useCallback((files: File[]) => {
+    setSelectedFiles(files)
   }, [])
 
   const handleFileUpload = useCallback(() => {
@@ -24,10 +28,10 @@ export function App() {
   }, [handleFileSelect])
 
   const handleBackToOverview = useCallback(() => {
-    setSelectedFile(null)
+    setSelectedFiles(null)
   }, [])
 
-  if (!selectedFile) {
+  if (!selectedFiles || selectedFiles.length === 0) {
     return (
       <div className="h-screen">
         <div className="flex h-screen flex-col">
@@ -40,7 +44,7 @@ export function App() {
               className="hidden"
               onChange={handleFileInputChange}
             />
-            <Overview onFileSelect={handleFileSelect} onFileUpload={handleFileUpload} />
+            <Overview onFilesSelect={handleFilesSelect} onFileUpload={handleFileUpload} />
           </div>
         </div>
       </div>
@@ -60,7 +64,7 @@ export function App() {
             onChange={handleFileInputChange}
           />
           <LapAnalysis
-            initialFile={selectedFile}
+            initialFiles={selectedFiles}
             onBackToStart={handleBackToOverview}
           />
         </div>

@@ -1,6 +1,7 @@
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Upload, FileText, AlertCircle, Loader2, ArrowLeft } from "lucide-react"
+import { Upload, FileText, AlertCircle, Loader2, ArrowLeft, ChevronDown, ChevronUp } from "lucide-react"
 
 interface TelemetrySourceInputProps {
   onFileSelect: (file: File) => void
@@ -21,6 +22,8 @@ export function TelemetrySourceInput({
   progress,
   error,
 }: TelemetrySourceInputProps) {
+  const [collapsed, setCollapsed] = useState(true)
+
   return (
     <div className="border-b border-border p-3">
       <div className="mb-2 flex items-center justify-between">
@@ -42,40 +45,51 @@ export function TelemetrySourceInput({
               {sourceLabel}
             </span>
           )}
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="h-5 w-5"
+            onClick={() => setCollapsed(!collapsed)}
+            title={collapsed ? "Expand" : "Collapse"}
+          >
+            {collapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+          </Button>
         </div>
       </div>
 
-      <div className="space-y-2">
-        <label className="block cursor-pointer">
-          <div className="flex items-center justify-center gap-2 rounded-md border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground">
-            <Upload className="h-3.5 w-3.5" />
-            <span>Upload .ibt file</span>
-          </div>
-          <Input
-            type="file"
-            accept=".ibt"
-            disabled={loading}
-            className="hidden"
-            onChange={(e) => {
-              const f = e.currentTarget.files?.[0]
-              if (!f) return
-              onFileSelect(f)
-              e.currentTarget.value = ""
-            }}
-          />
-        </label>
+      {!collapsed && (
+        <div className="space-y-2">
+          <label className="block cursor-pointer">
+            <div className="flex items-center justify-center gap-2 rounded-md border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground">
+              <Upload className="h-3.5 w-3.5" />
+              <span>Upload .ibt file</span>
+            </div>
+            <Input
+              type="file"
+              accept=".ibt"
+              disabled={loading}
+              className="hidden"
+              onChange={(e) => {
+                const f = e.currentTarget.files?.[0]
+                if (!f) return
+                onFileSelect(f)
+                e.currentTarget.value = ""
+              }}
+            />
+          </label>
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full gap-1.5"
-          disabled={loading}
-          onClick={onLoadSample}
-        >
-          <FileText className="h-3.5 w-3.5" />
-          Load Sample
-        </Button>
-      </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full gap-1.5"
+            disabled={loading}
+            onClick={onLoadSample}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Load Sample
+          </Button>
+        </div>
+      )}
 
       {progress && (
         <div className="mt-2">

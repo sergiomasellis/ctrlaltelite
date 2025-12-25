@@ -50,12 +50,12 @@ export function parseSectorBoundaries(yaml: string): SectorBoundary[] {
     sectors.unshift({ sectorNum: 0, startPct: 0 })
   }
   
-  // Ensure we have a final sector at 100% if the last sector is not at 100%
+  // Ensure we have a final sector at 100% (1.0) if the last sector is not at 100%
   const lastSector = sectors[sectors.length - 1]
-  if (lastSector && lastSector.startPct < 100) {
-    // Add a final sector boundary at 100% with the next sector number
+  if (lastSector && lastSector.startPct < 1.0) {
+    // Add a final sector boundary at 100% (1.0) with the next sector number
     const maxSectorNum = Math.max(...sectors.map(s => s.sectorNum))
-    sectors.push({ sectorNum: maxSectorNum + 1, startPct: 100 })
+    sectors.push({ sectorNum: maxSectorNum + 1, startPct: 1.0 })
   }
   
   return sectors
@@ -72,7 +72,8 @@ export function calculateSectorTimes(
   
   for (let i = 0; i < sectorBoundaries.length; i++) {
     const boundary = sectorBoundaries[i]!
-    const sectorDistKm = (boundary.startPct * lapData.distanceKm) / 100
+    // SectorStartPct is stored as a decimal fraction (0.0-1.0), not percentage (0-100)
+    const sectorDistKm = boundary.startPct * lapData.distanceKm
     
     // Find the time at this distance
     const timeAtDist = interpolateValue(
@@ -101,6 +102,17 @@ export function calculateSectorTimes(
       timeSec: curr.timeSec - prev.timeSec,
       distanceKm: curr.distanceKm - prev.distanceKm,
     })
+  }
+  
+  // Normalize sector times so they sum to the actual lap time
+  // This ensures that sector deltas will correctly sum to lap time deltas
+  const sumOfSectorTimes = actualSectorTimes.reduce((sum, st) => sum + st.timeSec, 0)
+  if (sumOfSectorTimes > 0 && lapData.lapTimeSec > 0) {
+    const normalizationFactor = lapData.lapTimeSec / sumOfSectorTimes
+    return actualSectorTimes.map(st => ({
+      ...st,
+      timeSec: st.timeSec * normalizationFactor,
+    }))
   }
   
   return actualSectorTimes

@@ -17,7 +17,11 @@ export function formatDeltaSeconds(deltaSec: number) {
 
 export function formatSectorTime(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return "—"
-  return `${seconds.toFixed(3)}s`
+  const ms = Math.round(seconds * 1000)
+  const m = Math.floor(ms / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  const milli = ms % 1000
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(milli).padStart(3, "0")}`
 }
 
 function binarySearchLowerBound(points: IbtLapPoint[], x: number, xKey: "distanceKm" | "timeSec") {
