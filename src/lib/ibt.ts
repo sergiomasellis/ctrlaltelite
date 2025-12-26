@@ -311,6 +311,7 @@ export async function readIbtSamples(
 
 export interface IbtWeekendInfo {
   trackName?: string
+  trackID?: number
   trackDisplayName?: string
   trackDisplayShortName?: string
   trackConfigName?: string
@@ -421,6 +422,12 @@ export async function readIbtMetadata(blob: Blob): Promise<IbtSessionMetadata> {
   }
 
   const weekendInfo: IbtWeekendInfo = {}
+
+  const weekendTrackName = extractYamlValue(yaml, "TrackName")
+  if (weekendTrackName) weekendInfo.trackName = weekendTrackName
+
+  const weekendTrackID = yaml.match(/TrackID:\s*(\d+)/)
+  if (weekendTrackID) weekendInfo.trackID = parseInt(weekendTrackID[1], 10)
 
   const weekendTrackDisplayName = extractYamlValue(yaml, "TrackDisplayName")
   if (weekendTrackDisplayName) {
@@ -922,6 +929,12 @@ export function parseWeekendInfoFromYaml(yaml: string): IbtWeekendInfo {
   const weekendInfoBlock = weekendInfoMatch ? weekendInfoMatch[1] : yaml
   
   // Track information
+  const trackName = extractYamlValue(weekendInfoBlock, "TrackName")
+  if (trackName) weekendInfo.trackName = trackName
+
+  const trackID = weekendInfoBlock.match(/TrackID:\s*(\d+)/)
+  if (trackID) weekendInfo.trackID = parseInt(trackID[1], 10)
+
   const trackDisplayName = extractYamlValue(weekendInfoBlock, "TrackDisplayName")
   if (trackDisplayName) weekendInfo.trackDisplayName = trackDisplayName
   

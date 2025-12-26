@@ -118,9 +118,46 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
   }, [])
 
   const handleSectorClick = useCallback((sectorStartKm: number, sectorEndKm: number) => {
+    // Sector distances are calculated using official track length, but telemetry points
+    // use actual measured lap distance. Scale the sector boundaries to match actual lap distance.
+    if (ibtLapDataByLap && selectedLaps.length > 0 && weekendInfo) {
+      const refLap = selectedLaps[0]
+      const refData = ibtLapDataByLap[refLap]
+      if (refData) {
+        const officialTrackLengthKm = weekendInfo.trackLengthOfficial
+          ? parseFloat(weekendInfo.trackLengthOfficial.replace(/[^\d.]/g, ''))
+          : weekendInfo.trackLength
+          ? parseFloat(weekendInfo.trackLength.replace(/[^\d.]/g, ''))
+          : null
+        
+        if (officialTrackLengthKm && refData.distanceKm > 0) {
+          // Scale from official track length to actual lap distance
+          const scaleFactor = refData.distanceKm / officialTrackLengthKm
+          const scaledStart = sectorStartKm * scaleFactor
+          const scaledEnd = sectorEndKm * scaleFactor
+          
+          console.log('handleSectorClick scaling:', {
+            sectorStartKm,
+            sectorEndKm,
+            officialTrackLengthKm,
+            actualLapDistanceKm: refData.distanceKm,
+            scaleFactor,
+            scaledStart,
+            scaledEnd,
+          })
+          
+          setZoomXMin(scaledStart)
+          setZoomXMax(scaledEnd)
+          return
+        }
+      }
+    }
+    
+    // Fallback: use distances as-is if scaling not possible
+    console.log('handleSectorClick fallback (no scaling):', { sectorStartKm, sectorEndKm })
     setZoomXMin(sectorStartKm)
     setZoomXMax(sectorEndKm)
-  }, [])
+  }, [ibtLapDataByLap, selectedLaps, weekendInfo])
 
   // Drag and drop handlers
   const handleDragStart = useCallback((id: string) => {
@@ -524,9 +561,16 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
         const byTime = [...points].sort((a, b) => a.timeSec - b.timeSec)
         const distanceKm = Math.max(...byDist.map((p) => p.distanceKm))
 
+        const officialTrackLengthKm = weekendInfoData?.trackLengthOfficial
+          ? parseFloat(weekendInfoData.trackLengthOfficial.replace(/[^\d.]/g, ''))
+          : weekendInfoData?.trackLength
+          ? parseFloat(weekendInfoData.trackLength.replace(/[^\d.]/g, ''))
+          : null
+        
         const sectorTimes = calculateSectorTimes(
           { byDist, byTime, lapNumber, lapTimeSec, distanceKm, points: points.length, sectorTimes: [] },
           sectors,
+          officialTrackLengthKm,
         )
 
         if (!sessionType && Object.keys(parsedSessions).length > 0) {
@@ -1467,6 +1511,13 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
                           sectorBoundaries={sectorBoundaries}
                           selectedLaps={selectedLaps}
                           lapDataByLap={ibtLapDataByLap}
+                          officialTrackLengthKm={
+                            weekendInfo?.trackLengthOfficial
+                              ? parseFloat(weekendInfo.trackLengthOfficial.replace(/[^\d.]/g, ''))
+                              : weekendInfo?.trackLength
+                              ? parseFloat(weekendInfo.trackLength.replace(/[^\d.]/g, ''))
+                              : null
+                          }
                           onSectorClick={handleSectorClick}
                         />
                       </div>

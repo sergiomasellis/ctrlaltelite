@@ -2,18 +2,40 @@ import type { IbtLapData, SectorBoundary, SectorTimes } from "@/components/lap-a
 import { interpolateValue } from "./telemetry-utils"
 
 // Simple YAML parser for sector boundaries
+// Looks for sectors under SplitTimeInfo: Sectors: in the .ibt file YAML
 export function parseSectorBoundaries(yaml: string): SectorBoundary[] {
   const sectors: SectorBoundary[] = []
   const lines = yaml.split("\n")
   let inSectors = false
   let indentLevel = 0
+  let inSplitTimeInfo = false
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (line.includes("Sectors:")) {
+    
+    // Look for SplitTimeInfo: section
+    if (line.includes("SplitTimeInfo:")) {
+      inSplitTimeInfo = true
+      continue
+    }
+    
+    // Look for Sectors: within SplitTimeInfo
+    if (inSplitTimeInfo && line.includes("Sectors:")) {
       inSectors = true
       indentLevel = line.match(/^(\s*)/)?.[1]?.length ?? 0
       continue
+    }
+    
+    // Also handle case where Sectors: appears directly (for backwards compatibility)
+    if (!inSectors && line.includes("Sectors:")) {
+      inSectors = true
+      indentLevel = line.match(/^(\s*)/)?.[1]?.length ?? 0
+      continue
+    }
+    
+    // Exit SplitTimeInfo section if we hit a new top-level key
+    if (inSplitTimeInfo && !inSectors && line.match(/^\w+:/) && !line.includes("SplitTimeInfo")) {
+      inSplitTimeInfo = false
     }
     
     if (inSectors) {
@@ -65,15 +87,30 @@ export function parseSectorBoundaries(yaml: string): SectorBoundary[] {
 export function calculateSectorTimes(
   lapData: IbtLapData,
   sectorBoundaries: SectorBoundary[],
+  officialTrackLengthKm?: number | null,
 ): SectorTimes[] {
   const sectorTimes: SectorTimes[] = []
   
   if (sectorBoundaries.length === 0) return sectorTimes
   
+  // Use official track length from YAML if available, otherwise fall back to actual lap distance
+  // Sector percentages in YAML are based on the official track length, not the measured lap distance
+  const trackLengthKm = officialTrackLengthKm ?? lapData.distanceKm
+  
   for (let i = 0; i < sectorBoundaries.length; i++) {
     const boundary = sectorBoundaries[i]!
     // SectorStartPct is stored as a decimal fraction (0.0-1.0), not percentage (0-100)
-    const sectorDistKm = boundary.startPct * lapData.distanceKm
+    // Calculate sector distance using official track length
+    let sectorDistKm = boundary.startPct * trackLengthKm
+    
+    // For the last sector (100%), use actual lap distance instead of official track length
+    // because telemetry data doesn't extend beyond the actual measured lap distance
+    if (boundary.startPct >= 1.0) {
+      sectorDistKm = lapData.distanceKm
+    }
+    
+    // Clamp to actual lap distance to avoid interpolation issues
+    sectorDistKm = Math.min(sectorDistKm, lapData.distanceKm)
     
     // Find the time at this distance
     const timeAtDist = interpolateValue(

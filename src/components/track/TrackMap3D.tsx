@@ -34,6 +34,9 @@ export function TrackMap3D({
   const targetOrbitPos = useRef<THREE.Vector3 | null>(null)
   const { theme } = useTheme()
 
+  const flipX = false
+  const flipY = true
+
   const bounds = useMemo(() => {
     if (!lapDataByLap || selectedLaps.length === 0) return null
 
@@ -80,13 +83,19 @@ export function TrackMap3D({
     const avgLat = (bounds.minLat + bounds.maxLat) / 2
     const lonScale = Math.cos((avgLat * Math.PI) / 180)
 
-    const x = ((lon - centerLon) / lonRange) * lonScale * 1000
-    const z = ((lat - centerLat) / latRange) * 1000
+    const maxRange = Math.max(latRange, lonRange * lonScale)
+    const scale = 1000 / maxRange
+
+    let x = (lon - centerLon) * lonScale * scale
+    let z = (lat - centerLat) * scale
+
+    if (flipX) x = -x
+    if (flipY) z = -z
 
     const elevation = speedKmh != null ? Math.max(0, (speedKmh / 300) * 20) : 0
 
     return new THREE.Vector3(x, elevation, z)
-  }, [bounds, centerLat, centerLon])
+  }, [bounds, centerLat, centerLon, flipX, flipY])
 
   const createTrackGeometry = useCallback((points: IbtLapPoint[]): THREE.BufferGeometry | null => {
     const validPoints = points.filter((p) => p.lat != null && p.lon != null)
@@ -304,6 +313,7 @@ export function TrackMap3D({
       // We'll stack them slightly in the Y (elevation) axis
       const verticalOffset = i * 4.0
 
+      // Always show the full lap line (don't filter by zoom - the yellow overlay handles that)
       const geometry = createTrackGeometry(lapData.byDist)
       if (!geometry) continue
 
@@ -450,20 +460,32 @@ export function TrackMap3D({
     const lapData = lapDataByLap[refLap]
     if (!lapData) return []
 
-    return lapData.byDist
+    // Filter by zoom range if zoom is active
+    const pointsToUse = zoomXMin != null && zoomXMax != null
+      ? lapData.byDist.filter((p) => p.distanceKm >= zoomXMin && p.distanceKm <= zoomXMax)
+      : lapData.byDist
+
+    return pointsToUse
       .filter((p): p is typeof p & { lat: number; lon: number } =>
         p.lat != null && p.lon != null && Number.isFinite(p.lat) && Number.isFinite(p.lon)
       )
       .sort((a, b) => a.distanceKm - b.distanceKm)
-  }, [lapDataByLap, selectedLaps])
+  }, [lapDataByLap, selectedLaps, zoomXMin, zoomXMax])
 
   const totalLapDistance = useMemo(() => {
     if (!lapDataByLap || selectedLaps.length === 0) return 0
     const refLap = selectedLaps[0]
     if (refLap == null) return 0
     const lapData = lapDataByLap[refLap]
-    return lapData?.distanceKm ?? 0
-  }, [lapDataByLap, selectedLaps])
+    if (!lapData) return 0
+
+    // When zoomed, use the zoom range as the total distance for cursor calculation
+    if (zoomXMin != null && zoomXMax != null) {
+      return zoomXMax - zoomXMin
+    }
+
+    return lapData.distanceKm ?? 0
+  }, [lapDataByLap, selectedLaps, zoomXMin, zoomXMax])
 
   const refLapColor = useMemo(() => {
     const refLap = selectedLaps[0]
@@ -484,7 +506,16 @@ export function TrackMap3D({
       return
     }
 
-    const lapPercentage = Math.max(0, Math.min(1, cursorDistance / totalLapDistance))
+    // When zoomed, adjust cursorDistance to be relative to the zoom range
+    let adjustedCursorDistance = cursorDistance
+    if (zoomXMin != null && zoomXMax != null) {
+      // Clamp cursorDistance to the zoom range
+      adjustedCursorDistance = Math.max(zoomXMin, Math.min(zoomXMax, cursorDistance))
+      // Make it relative to the zoom range (0 to zoomXMax - zoomXMin)
+      adjustedCursorDistance = adjustedCursorDistance - zoomXMin
+    }
+
+    const lapPercentage = Math.max(0, Math.min(1, adjustedCursorDistance / totalLapDistance))
     const floatIndex = lapPercentage * (validGpsPoints.length - 1)
     const indexLo = Math.floor(floatIndex)
     const indexHi = Math.min(indexLo + 1, validGpsPoints.length - 1)
@@ -507,7 +538,7 @@ export function TrackMap3D({
 
     cursorMeshRef.current.visible = true
     cursorMeshRef.current.position.copy(pos)
-  }, [bounds, gpsTo3D, validGpsPoints, totalLapDistance])
+  }, [bounds, gpsTo3D, validGpsPoints, totalLapDistance, zoomXMin, zoomXMax])
 
   useEffect(() => {
     if (!cursorMeshRef.current) return

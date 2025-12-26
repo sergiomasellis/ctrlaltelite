@@ -4,6 +4,7 @@ interface SectorIndicatorsProps {
   sectorBoundaries: SectorBoundary[]
   selectedLaps: number[]
   lapDataByLap: Record<number, IbtLapData>
+  officialTrackLengthKm?: number | null
   onSectorClick?: (sectorStartKm: number, sectorEndKm: number) => void
 }
 
@@ -11,6 +12,7 @@ export function SectorIndicators({
   sectorBoundaries, 
   selectedLaps,
   lapDataByLap,
+  officialTrackLengthKm,
   onSectorClick 
 }: SectorIndicatorsProps) {
   if (sectorBoundaries.length <= 1) return null
@@ -40,6 +42,10 @@ export function SectorIndicators({
     
     if (!startBoundary || !endBoundary) return
 
+    // Use official track length from YAML if available, otherwise fall back to actual lap distance
+    // Sector percentages in YAML are based on the official track length, not the measured lap distance
+    const trackLengthKm = officialTrackLengthKm ?? refData.distanceKm
+    
     // Check if startPct values are stored as decimal (0-1) or percentage (0-100)
     // Values can be mixed - check each boundary individually
     // If a value is > 1, it's a percentage; otherwise it's a decimal
@@ -50,19 +56,19 @@ export function SectorIndicators({
     let sectorEndKm: number
     
     if (startIsDecimal) {
-      // startPct is stored as decimal (0-1), multiply directly
-      sectorStartKm = startBoundary.startPct * refData.distanceKm
+      // startPct is stored as decimal (0-1), multiply by official track length
+      sectorStartKm = startBoundary.startPct * trackLengthKm
     } else {
       // startPct is stored as percentage (0-100), divide by 100
-      sectorStartKm = (startBoundary.startPct * refData.distanceKm) / 100
+      sectorStartKm = (startBoundary.startPct * trackLengthKm) / 100
     }
     
     if (endIsDecimal) {
-      // startPct is stored as decimal (0-1), multiply directly
-      sectorEndKm = endBoundary.startPct * refData.distanceKm
+      // startPct is stored as decimal (0-1), multiply by official track length
+      sectorEndKm = endBoundary.startPct * trackLengthKm
     } else {
       // startPct is stored as percentage (0-100), divide by 100
-      sectorEndKm = (endBoundary.startPct * refData.distanceKm) / 100
+      sectorEndKm = (endBoundary.startPct * trackLengthKm) / 100
     }
 
     // Debug logging
