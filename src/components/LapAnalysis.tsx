@@ -5,6 +5,7 @@ import {
   Settings,
   Map,
   AlertCircle,
+  GripVertical,
   ArrowLeft,
   Loader2,
   Sun,
@@ -36,6 +37,7 @@ import { prepareTelemetryData } from "@/components/lap-analysis/telemetry-data-u
 import { LAP_COLOR_PALETTE } from "@/components/lap-analysis/constants"
 import type { IbtLapData, IbtLapPoint, SectorBoundary } from "@/components/lap-analysis/types"
 import { DraggableChart } from "@/components/telemetry/DraggableChart"
+import { Sortable, SortableItem, SortableItemHandle } from "@/components/ui/sortable"
 
 // Lazy load chart component for better initial load
 const SyncedChart = lazy(() => import("@/components/telemetry/SyncedChart").then(module => ({ default: module.SyncedChart })))
@@ -99,8 +101,6 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
 
   // Chart order state
   const [chartOrder, setChartOrder] = useState<ChartId[]>(DEFAULT_CHART_ORDER)
-  const [draggingChartId, setDraggingChartId] = useState<ChartId | null>(null)
-  const [dragOverChartId, setDragOverChartId] = useState<ChartId | null>(null)
 
   // Zoom state (shared across all charts)
   const [zoomXMin, setZoomXMin] = useState<number | null>(null)
@@ -158,42 +158,6 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
     setZoomXMin(sectorStartKm)
     setZoomXMax(sectorEndKm)
   }, [ibtLapDataByLap, selectedLaps, weekendInfo])
-
-  // Drag and drop handlers
-  const handleDragStart = useCallback((id: string) => {
-    setDraggingChartId(id as ChartId)
-  }, [])
-
-  const handleDragEnd = useCallback(() => {
-    setDraggingChartId(null)
-    setDragOverChartId(null)
-  }, [])
-
-  const handleDragOver = useCallback((id: string) => {
-    setDragOverChartId(id as ChartId)
-  }, [])
-
-  const handleDrop = useCallback((draggedId: string, targetId: string) => {
-    const dragged = draggedId as ChartId
-    const target = targetId as ChartId
-    if (dragged === target) {
-      setDragOverChartId(null)
-      return
-    }
-
-    setChartOrder((prev) => {
-      const newOrder = [...prev]
-      const draggedIndex = newOrder.indexOf(dragged)
-      const targetIndex = newOrder.indexOf(target)
-
-      if (draggedIndex === -1 || targetIndex === -1) return prev
-
-      newOrder.splice(draggedIndex, 1)
-      newOrder.splice(targetIndex, 0, dragged)
-      return newOrder
-    })
-    setDragOverChartId(null)
-  }, [])
 
   const toggleLap = useCallback((lap: number) => {
     setSelectedLaps((prev) => {
@@ -1464,46 +1428,45 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
                     {/* Charts container with scroll if needed */}
                     <div className="flex-1 flex flex-col overflow-y-auto scrollbar-thin scrollbar-thumb-border/40">
                       {/* Draggable charts grid */}
-                      <div
-                        className="grid grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 auto-rows-min gap-4 p-4 flex-1 pb-20"
-                        onDragLeave={(e) => {
-                          const relatedTarget = e.relatedTarget as HTMLElement
-                          if (!e.currentTarget.contains(relatedTarget)) {
-                            setDragOverChartId(null)
-                          }
-                        }}
+                      <Sortable
+                        value={chartOrder}
+                        onValueChange={setChartOrder}
+                        getItemValue={(item) => item}
+                        strategy="grid"
+                        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 auto-rows-[minmax(160px,_1fr)] gap-4 p-4 flex-1 min-h-0 pb-20"
                       >
                         {chartOrder.map((chartId) => {
                           const config = chartConfigs[chartId]
-                          const isSpeedChart = chartId === CHART_IDS.SPEED
-                          const colSpan = isSpeedChart ? "col-span-2" : "col-span-1"
-                          const minHeight = isSpeedChart ? "min-h-[220px]" : "min-h-[160px]"
+                          const minHeight = "min-h-[160px]"
 
                           return (
-                            <DraggableChart
+                            <SortableItem
                               key={chartId}
-                              id={chartId}
-                              title={config.title}
-                              unit={config.unit}
-                              onDragStart={handleDragStart}
-                              onDragEnd={handleDragEnd}
-                              onDragOver={handleDragOver}
-                              onDrop={handleDrop}
-                              isDragging={draggingChartId === chartId}
-                              dragOverId={dragOverChartId}
-                              className={`${colSpan} ${minHeight} rounded-xl border border-border/40 bg-card/50 backdrop-blur-sm shadow-sm hover:shadow-md transition-all group`}
+                              value={chartId}
+                              className={`${minHeight} h-full`}
                             >
-                              <Suspense fallback={
-                                <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
-                                  <span className="animate-pulse">Loading...</span>
-                                </div>
-                              }>
-                                {renderChartContent(chartId)}
-                              </Suspense>
-                            </DraggableChart>
+                              <DraggableChart
+                                title={config.title}
+                                unit={config.unit}
+                                handle={(
+                                  <SortableItemHandle className="opacity-0 group-hover:opacity-100 transition-opacity touch-none select-none p-0.5 hover:bg-muted rounded">
+                                    <GripVertical className="h-3 w-3 text-muted-foreground" />
+                                  </SortableItemHandle>
+                                )}
+                                className="h-full rounded-xl border border-border/40 bg-card/50 backdrop-blur-sm shadow-sm hover:shadow-md transition-all group"
+                              >
+                                <Suspense fallback={
+                                  <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
+                                    <span className="animate-pulse">Loading...</span>
+                                  </div>
+                                }>
+                                  {renderChartContent(chartId)}
+                                </Suspense>
+                              </DraggableChart>
+                            </SortableItem>
                           )
                         })}
-                      </div>
+                      </Sortable>
 
                       {/* Sector indicators at bottom */}
                       <div className="sticky bottom-0 bg-background/80 backdrop-blur-xl border-t border-border/40 p-3 z-10 mx-4 mb-4 rounded-xl border shadow-lg">
