@@ -1,16 +1,19 @@
-import { useState, useCallback, useMemo, useRef, Suspense, lazy, useEffect } from "react"
+import { useState, useCallback, useMemo, useRef, Suspense, lazy, useEffect, type Ref } from "react"
 import {
   Upload,
   FileText,
   Settings,
-  Map,
+  Map as MapIcon,
   AlertCircle,
   GripVertical,
+  RotateCcw,
   ArrowLeft,
   Loader2,
   Sun,
   Moon,
 } from "lucide-react"
+import { Responsive, WidthProvider } from "react-grid-layout"
+import type { Layout, Layouts } from "react-grid-layout"
 import { useTheme } from "@/lib/theme-provider"
 import { Button } from "@/components/ui/button"
 import {
@@ -37,11 +40,12 @@ import { prepareTelemetryData } from "@/components/lap-analysis/telemetry-data-u
 import { LAP_COLOR_PALETTE } from "@/components/lap-analysis/constants"
 import type { IbtLapData, IbtLapPoint, SectorBoundary } from "@/components/lap-analysis/types"
 import { DraggableChart } from "@/components/telemetry/DraggableChart"
-import { Sortable, SortableItem, SortableItemHandle } from "@/components/ui/sortable"
 
 // Lazy load chart component for better initial load
 const SyncedChart = lazy(() => import("@/components/telemetry/SyncedChart").then(module => ({ default: module.SyncedChart })))
 const TrackMap = lazy(() => import("@/components/track/TrackMap3D").then(module => ({ default: module.TrackMap3D })))
+
+const ResponsiveGridLayout = WidthProvider(Responsive)
 
 // Chart type IDs
 const CHART_IDS = {
@@ -64,18 +68,129 @@ const LAP_SESSION_KEY_MULTIPLIER = 10000
 
 // Default chart order
 const DEFAULT_CHART_ORDER: ChartId[] = [
-  CHART_IDS.SPEED,
-  CHART_IDS.THROTTLE,
-  CHART_IDS.BRAKE,
-  CHART_IDS.TIME_DELTA,
   CHART_IDS.LINE_DIST,
+  CHART_IDS.TIME_DELTA,
+  CHART_IDS.SPEED,
+  CHART_IDS.BRAKE,
   CHART_IDS.GEAR,
-  CHART_IDS.RPM,
   CHART_IDS.STEERING,
+  CHART_IDS.THROTTLE,
   CHART_IDS.TIRE_TEMP,
   CHART_IDS.TIRE_PRESSURE,
+  CHART_IDS.RPM,
   CHART_IDS.TIRE_WEAR,
 ]
+
+const GRID_BREAKPOINTS = {
+  xl: 1400,
+  lg: 1200,
+  md: 992,
+  sm: 768,
+  xs: 480,
+  xxs: 0,
+} as const
+
+const GRID_COLUMNS = {
+  xl: 3,
+  lg: 3,
+  md: 2,
+  sm: 1,
+  xs: 1,
+  xxs: 1,
+} as const
+
+const GRID_ROW_HEIGHT = 180
+const GRID_MARGIN = 16
+
+const CHART_ID_SET = new Set<ChartId>(Object.values(CHART_IDS))
+
+const buildLayouts = (order: ChartId[]): Layouts => {
+  const createLayout = (columns: number): Layout[] =>
+    order.map((id, index) => ({
+      i: id,
+      x: index % columns,
+      y: Math.floor(index / columns),
+      w: 1,
+      h: 1,
+      minW: 1,
+      minH: 1,
+    }))
+
+  return {
+    xl: createLayout(GRID_COLUMNS.xl),
+    lg: createLayout(GRID_COLUMNS.lg),
+    md: createLayout(GRID_COLUMNS.md),
+    sm: createLayout(GRID_COLUMNS.sm),
+    xs: createLayout(GRID_COLUMNS.xs),
+    xxs: createLayout(GRID_COLUMNS.xxs),
+  }
+}
+
+const DEFAULT_LAYOUTS: Layouts = {
+  xl: [
+    { i: CHART_IDS.LINE_DIST, x: 0, y: 0, w: 1, h: 1, minW: 1, minH: 1 },
+    { i: CHART_IDS.TIME_DELTA, x: 1, y: 0, w: 1, h: 1, minW: 1, minH: 1 },
+    { i: CHART_IDS.SPEED, x: 2, y: 0, w: 1, h: 1, minW: 1, minH: 1 },
+    { i: CHART_IDS.BRAKE, x: 0, y: 1, w: 2, h: 2, minW: 1, minH: 1 },
+    { i: CHART_IDS.GEAR, x: 2, y: 1, w: 1, h: 1, minW: 1, minH: 1 },
+    { i: CHART_IDS.STEERING, x: 2, y: 2, w: 1, h: 1, minW: 1, minH: 1 },
+    { i: CHART_IDS.THROTTLE, x: 0, y: 3, w: 2, h: 2, minW: 1, minH: 1 },
+    { i: CHART_IDS.TIRE_TEMP, x: 2, y: 3, w: 1, h: 1, minW: 1, minH: 1 },
+    { i: CHART_IDS.TIRE_PRESSURE, x: 2, y: 4, w: 1, h: 1, minW: 1, minH: 1 },
+    { i: CHART_IDS.RPM, x: 0, y: 5, w: 2, h: 1, minW: 1, minH: 1 },
+    { i: CHART_IDS.TIRE_WEAR, x: 2, y: 5, w: 1, h: 1, minW: 1, minH: 1 },
+  ],
+  lg: [],
+  md: [],
+  sm: [],
+  xs: [],
+  xxs: [],
+}
+
+DEFAULT_LAYOUTS.lg = DEFAULT_LAYOUTS.xl
+DEFAULT_LAYOUTS.md = buildLayouts(DEFAULT_CHART_ORDER).md
+DEFAULT_LAYOUTS.sm = buildLayouts(DEFAULT_CHART_ORDER).sm
+DEFAULT_LAYOUTS.xs = buildLayouts(DEFAULT_CHART_ORDER).xs
+DEFAULT_LAYOUTS.xxs = buildLayouts(DEFAULT_CHART_ORDER).xxs
+
+const LAYOUT_STORAGE_KEY = "lap-analysis-layout-v1"
+
+const mergeLayouts = (current: Layout[] | undefined, fallback: Layout[]): Layout[] => {
+  const byId = new globalThis.Map((current ?? []).map((item) => [item.i, item]))
+  return fallback.map((item) => ({ ...item, ...(byId.get(item.i) ?? {}) }))
+}
+
+const normalizeLayouts = (stored: Layouts | null): Layouts => ({
+  xl: mergeLayouts(stored?.xl, DEFAULT_LAYOUTS.xl),
+  lg: mergeLayouts(stored?.lg, DEFAULT_LAYOUTS.lg),
+  md: mergeLayouts(stored?.md, DEFAULT_LAYOUTS.md),
+  sm: mergeLayouts(stored?.sm, DEFAULT_LAYOUTS.sm),
+  xs: mergeLayouts(stored?.xs, DEFAULT_LAYOUTS.xs),
+  xxs: mergeLayouts(stored?.xxs, DEFAULT_LAYOUTS.xxs),
+})
+
+const normalizeOrder = (value: unknown): ChartId[] | null => {
+  if (!Array.isArray(value)) return null
+  const filtered = value.filter((item): item is ChartId => CHART_ID_SET.has(item as ChartId))
+  if (filtered.length !== CHART_ID_SET.size) return null
+  const unique = new Set(filtered)
+  if (unique.size !== filtered.length) return null
+  return filtered
+}
+
+const readStoredLayout = (): { layouts: Layouts; order: ChartId[] } | null => {
+  if (typeof window === "undefined") return null
+  const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as { layouts?: Layouts; order?: ChartId[] }
+    const order = normalizeOrder(parsed.order) ?? null
+    const layouts = normalizeLayouts(parsed.layouts ?? null)
+    return { layouts, order: order ?? DEFAULT_CHART_ORDER }
+  } catch {
+    return null
+  }
+}
 
 export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = {}) {
   // Create cursor store once - bypasses React state for performance
@@ -99,8 +214,12 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
   const [sessionsByNum, setSessionsByNum] = useState<Record<number, import("@/lib/ibt").IbtSessionInfo>>({})
   const [driverCarIdx, setDriverCarIdx] = useState<number | null>(null)
 
+  const storedLayout = useMemo(() => readStoredLayout(), [])
+
   // Chart order state
-  const [chartOrder, setChartOrder] = useState<ChartId[]>(DEFAULT_CHART_ORDER)
+  const [chartOrder, setChartOrder] = useState<ChartId[]>(() => storedLayout?.order ?? DEFAULT_CHART_ORDER)
+  const [chartLayouts, setChartLayouts] = useState<Layouts>(() => normalizeLayouts(storedLayout?.layouts ?? null))
+  const chartLayoutsRef = useRef<Layouts>(chartLayouts)
 
   // Zoom state (shared across all charts)
   const [zoomXMin, setZoomXMin] = useState<number | null>(null)
@@ -116,6 +235,38 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
     setZoomXMin(null)
     setZoomXMax(null)
   }, [])
+
+  const persistLayout = useCallback((layouts: Layouts, order: ChartId[]) => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({ layouts, order }))
+  }, [])
+
+  const handleLayoutChange = useCallback((_: Layout[], layouts: Layouts) => {
+    chartLayoutsRef.current = layouts
+    setChartLayouts(layouts)
+  }, [])
+
+  const handleLayoutCommit = useCallback((layout: Layout[]) => {
+    const nextOrder = [...layout]
+      .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+      .map((item) => item.i as ChartId)
+    setChartOrder((prev) => {
+      if (prev.length !== nextOrder.length) return prev
+      for (let i = 0; i < prev.length; i += 1) {
+        if (prev[i] !== nextOrder[i]) return nextOrder
+      }
+      return prev
+    })
+    persistLayout(chartLayoutsRef.current, nextOrder)
+  }, [persistLayout])
+
+  const handleResetLayout = useCallback(() => {
+    const defaultLayouts = normalizeLayouts(null)
+    chartLayoutsRef.current = defaultLayouts
+    setChartLayouts(defaultLayouts)
+    setChartOrder(DEFAULT_CHART_ORDER)
+    persistLayout(defaultLayouts, DEFAULT_CHART_ORDER)
+  }, [persistLayout])
 
   const handleSectorClick = useCallback((sectorStartKm: number, sectorEndKm: number) => {
     // Sector distances are calculated using official track length, but telemetry points
@@ -1290,6 +1441,16 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
               )}
               <span className="sr-only">Toggle theme</span>
             </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleResetLayout}
+              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-full"
+              title="Reset layout"
+            >
+              <RotateCcw className="h-4 w-4" />
+              <span className="sr-only">Reset layout</span>
+            </Button>
             <Button variant="ghost" size="icon-sm" className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-full">
               <Settings className="h-4 w-4" />
             </Button>
@@ -1367,7 +1528,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
                 <div className="relative flex-shrink-0 h-64 border-b border-border/40 bg-gradient-to-b from-background/50 to-background/20">
                   <div className="absolute left-4 top-4 z-10">
                     <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-background/80 backdrop-blur-md border border-border/40 shadow-sm">
-                      <Map className="h-3.5 w-3.5 text-primary" />
+                      <MapIcon className="h-3.5 w-3.5 text-primary" />
                       <span className="text-[10px] font-bold text-foreground/80 uppercase tracking-widest">Track Map</span>
                     </div>
                   </div>
@@ -1390,7 +1551,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <div className="text-center md:opacity-50">
-                          <Map className="h-10 w-10 mx-auto mb-2 text-muted-foreground/30" />
+                          <MapIcon className="h-10 w-10 mx-auto mb-2 text-muted-foreground/30" />
                           <p className="text-xs text-muted-foreground/50 uppercase tracking-widest">No Data</p>
                         </div>
                       </div>
@@ -1428,30 +1589,44 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
                     {/* Charts container with scroll if needed */}
                     <div className="flex-1 flex flex-col overflow-y-auto scrollbar-thin scrollbar-thumb-border/40">
                       {/* Draggable charts grid */}
-                      <Sortable
-                        value={chartOrder}
-                        onValueChange={setChartOrder}
-                        getItemValue={(item) => item}
-                        strategy="grid"
-                        className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 auto-rows-[minmax(160px,_1fr)] gap-4 p-4 flex-1 min-h-0 pb-20"
+                      <ResponsiveGridLayout
+                        layouts={chartLayouts}
+                        onLayoutChange={handleLayoutChange}
+                        onDragStop={(layout) => handleLayoutCommit(layout)}
+                        onResizeStop={(layout) => handleLayoutCommit(layout)}
+                        breakpoints={GRID_BREAKPOINTS}
+                        cols={GRID_COLUMNS}
+                        rowHeight={GRID_ROW_HEIGHT}
+                        margin={[GRID_MARGIN, GRID_MARGIN]}
+                        containerPadding={[0, 0]}
+                        draggableHandle=".chart-drag-handle"
+                        isResizable
+                        isDraggable
+                        compactType="vertical"
+                        resizeHandles={["se"]}
+                        resizeHandle={(
+                          handleAxis: "s" | "w" | "e" | "n" | "sw" | "nw" | "se" | "ne",
+                          ref: Ref<HTMLElement>,
+                        ) => (
+                          <span
+                            ref={ref}
+                            className={`react-resizable-handle react-resizable-handle-${handleAxis} absolute bottom-2 right-2 h-2.5 w-2.5 rounded-sm border border-border/60 bg-muted/60 opacity-70 transition-opacity group-hover:opacity-100 cursor-se-resize`}
+                          />
+                        )}
+                        className="flex-1 min-h-0 p-4 pb-20"
                       >
                         {chartOrder.map((chartId) => {
                           const config = chartConfigs[chartId]
-                          const minHeight = "min-h-[160px]"
 
                           return (
-                            <SortableItem
-                              key={chartId}
-                              value={chartId}
-                              className={`${minHeight} h-full`}
-                            >
+                            <div key={chartId} className="min-h-[160px] h-full group">
                               <DraggableChart
                                 title={config.title}
                                 unit={config.unit}
                                 handle={(
-                                  <SortableItemHandle className="opacity-0 group-hover:opacity-100 transition-opacity touch-none select-none p-0.5 hover:bg-muted rounded">
+                                  <div className="chart-drag-handle opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing touch-none select-none p-0.5 hover:bg-muted rounded">
                                     <GripVertical className="h-3 w-3 text-muted-foreground" />
-                                  </SortableItemHandle>
+                                  </div>
                                 )}
                                 className="h-full rounded-xl border border-border/40 bg-card/50 backdrop-blur-sm shadow-sm hover:shadow-md transition-all group"
                               >
@@ -1463,10 +1638,10 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
                                   {renderChartContent(chartId)}
                                 </Suspense>
                               </DraggableChart>
-                            </SortableItem>
+                            </div>
                           )
                         })}
-                      </Sortable>
+                      </ResponsiveGridLayout>
 
                       {/* Sector indicators at bottom */}
                       <div className="sticky bottom-0 bg-background/80 backdrop-blur-xl border-t border-border/40 p-3 z-10 mx-4 mb-4 rounded-xl border shadow-lg">
