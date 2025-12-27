@@ -25,7 +25,7 @@ export function TelemetrySourceInput({
   const [collapsed, setCollapsed] = useState(true)
 
   return (
-    <div className="border-b border-border p-3">
+    <div className="p-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Data Source</span>
         <div className="flex items-center gap-1">

@@ -81,6 +81,9 @@ async function readSlice(blob: Blob, offset: number, length: number): Promise<Ar
 
 export async function readIbtHeader(blob: Blob): Promise<IbtHeader> {
   const base = await readSlice(blob, 0, 40)
+  if (base.byteLength < 40) {
+    throw new Error(`Invalid .ibt file: header is ${base.byteLength} bytes`)
+  }
   const dv = new DataView(base)
 
   const header = {
@@ -98,6 +101,26 @@ export async function readIbtHeader(blob: Blob): Promise<IbtHeader> {
 
   if (!Number.isFinite(header.varHeaderOffset) || header.varHeaderOffset <= 0) {
     throw new Error(`Invalid .ibt header: varHeaderOffset=${header.varHeaderOffset}`)
+  }
+  if (header.varHeaderOffset > blob.size) {
+    throw new Error(`Invalid .ibt header: varHeaderOffset=${header.varHeaderOffset} exceeds file size=${blob.size}`)
+  }
+  if (!Number.isFinite(header.numVars) || header.numVars <= 0) {
+    throw new Error(`Invalid .ibt header: numVars=${header.numVars}`)
+  }
+  if (!Number.isFinite(header.bufLen) || header.bufLen <= 0) {
+    throw new Error(`Invalid .ibt header: bufLen=${header.bufLen}`)
+  }
+  if (!Number.isFinite(header.sessionInfoOffset) || header.sessionInfoOffset < 0) {
+    throw new Error(`Invalid .ibt header: sessionInfoOffset=${header.sessionInfoOffset}`)
+  }
+  if (!Number.isFinite(header.sessionInfoLen) || header.sessionInfoLen < 0) {
+    throw new Error(`Invalid .ibt header: sessionInfoLen=${header.sessionInfoLen}`)
+  }
+  if (header.sessionInfoOffset + header.sessionInfoLen > blob.size) {
+    throw new Error(
+      `Invalid .ibt header: sessionInfoOffset=${header.sessionInfoOffset} sessionInfoLen=${header.sessionInfoLen} exceeds file size=${blob.size}`,
+    )
   }
 
   const fullHeaderBuf = await readSlice(blob, 0, header.varHeaderOffset)
@@ -122,7 +145,18 @@ export async function readIbtHeader(blob: Blob): Promise<IbtHeader> {
 
 export async function readIbtVarHeaders(blob: Blob, header: IbtHeader): Promise<IbtVar[]> {
   const byteLen = header.numVars * VAR_HEADER_SIZE
+  const expectedEnd = header.varHeaderOffset + byteLen
+  if (expectedEnd > blob.size) {
+    throw new Error(
+      `Invalid .ibt file: var headers exceed file size (offset=${header.varHeaderOffset}, bytes=${byteLen}, size=${blob.size})`,
+    )
+  }
   const buf = await readSlice(blob, header.varHeaderOffset, byteLen)
+  if (buf.byteLength < byteLen) {
+    throw new Error(
+      `Invalid .ibt file: expected ${byteLen} bytes of var headers at offset ${header.varHeaderOffset}, got ${buf.byteLength}`,
+    )
+  }
   const u8 = new Uint8Array(buf)
 
   const vars: IbtVar[] = []

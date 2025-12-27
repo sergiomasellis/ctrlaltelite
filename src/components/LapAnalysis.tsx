@@ -939,7 +939,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
   const loadSample = useCallback(async () => {
     try {
       const samplePath = encodeURI(
-        "/telemtry/acuransxevo22gt3_virginia 2022 full 2025-12-20 22-57-02.ibt",
+        "/telemetry/acuransxevo22gt3_virginia 2022 full 2025-12-20 22-57-02.ibt",
       )
       const res = await fetch(samplePath)
       if (!res.ok) throw new Error(`Failed to fetch sample .ibt: ${res.status} ${res.statusText}`)
