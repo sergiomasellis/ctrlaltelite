@@ -1,10 +1,11 @@
-import { useRef, useEffect, useMemo, useCallback } from "react"
+import { useRef, useEffect, useMemo, useCallback, type MouseEvent as ReactMouseEvent } from "react"
 import * as THREE from "three"
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
 import { useCursorSubscription } from "@/lib/cursorStore"
 import type { IbtLapData, IbtLapPoint } from "@/components/lap-analysis/types"
 import { LAP_COLOR_PALETTE } from "@/components/lap-analysis/constants"
 import { useTheme } from "@/lib/theme-provider"
+import type { TrackMapCorner, TrackMapData } from "@/components/track/types"
 
 interface TrackMap3DProps {
   lapDataByLap: Record<number, IbtLapData> | null
@@ -12,6 +13,10 @@ interface TrackMap3DProps {
   lapColors: Record<number, string>
   zoomXMin?: number | null
   zoomXMax?: number | null
+  trackMap?: TrackMapData | null
+  showLapLines?: boolean
+  onSurfaceClick?: (point: { distanceKm: number; lat: number; lon: number; altitudeM: number | null }) => void
+  surfaceStyle?: "default" | "merged"
 }
 
 export function TrackMap3D({
@@ -20,6 +25,10 @@ export function TrackMap3D({
   lapColors,
   zoomXMin,
   zoomXMax,
+  trackMap,
+  showLapLines = true,
+  onSurfaceClick,
+  surfaceStyle,
 }: TrackMap3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -29,6 +38,7 @@ export function TrackMap3D({
   const trackMeshesRef = useRef<THREE.Group | null>(null)
   const cursorMeshRef = useRef<THREE.Group | null>(null)
   const zoomHighlightRef = useRef<THREE.Group | null>(null)
+  const surfaceMeshRef = useRef<THREE.Mesh | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const targetCameraPos = useRef<THREE.Vector3 | null>(null)
   const targetOrbitPos = useRef<THREE.Vector3 | null>(null)
@@ -38,31 +48,77 @@ export function TrackMap3D({
   const flipY = true
 
   const bounds = useMemo(() => {
-    if (!lapDataByLap || selectedLaps.length === 0) return null
+    if ((!lapDataByLap || selectedLaps.length === 0) && !trackMap) return null
 
     let minLat = Infinity
     let maxLat = -Infinity
     let minLon = Infinity
     let maxLon = -Infinity
 
-    for (const lap of selectedLaps) {
-      const lapData = lapDataByLap[lap]
-      if (!lapData) continue
+    if (lapDataByLap) {
+      for (const lap of selectedLaps) {
+        const lapData = lapDataByLap[lap]
+        if (!lapData) continue
 
-      for (const p of lapData.byDist) {
-        if (p.lat != null && p.lon != null) {
-          minLat = Math.min(minLat, p.lat)
-          maxLat = Math.max(maxLat, p.lat)
-          minLon = Math.min(minLon, p.lon)
-          maxLon = Math.max(maxLon, p.lon)
+        for (const p of lapData.byDist) {
+          if (p.lat != null && p.lon != null) {
+            minLat = Math.min(minLat, p.lat)
+            maxLat = Math.max(maxLat, p.lat)
+            minLon = Math.min(minLon, p.lon)
+            maxLon = Math.max(maxLon, p.lon)
+          }
         }
+      }
+    }
+
+    if (trackMap) {
+      for (const point of trackMap.points) {
+        minLat = Math.min(minLat, point.left.lat, point.right.lat)
+        maxLat = Math.max(maxLat, point.left.lat, point.right.lat)
+        minLon = Math.min(minLon, point.left.lon, point.right.lon)
+        maxLon = Math.max(maxLon, point.left.lon, point.right.lon)
       }
     }
 
     if (!Number.isFinite(minLat)) return null
 
     return { minLat, maxLat, minLon, maxLon }
-  }, [lapDataByLap, selectedLaps])
+  }, [lapDataByLap, selectedLaps, trackMap])
+
+  const altitudeBounds = useMemo(() => {
+    let minAlt = Infinity
+    let maxAlt = -Infinity
+
+    if (lapDataByLap) {
+      for (const lap of selectedLaps) {
+        const lapData = lapDataByLap[lap]
+        if (!lapData) continue
+        for (const point of lapData.byDist) {
+          if (point.altitudeM != null && Number.isFinite(point.altitudeM)) {
+            minAlt = Math.min(minAlt, point.altitudeM)
+            maxAlt = Math.max(maxAlt, point.altitudeM)
+          }
+        }
+      }
+    }
+
+    if (trackMap) {
+      for (const point of trackMap.points) {
+        if (point.left.altitudeM != null && Number.isFinite(point.left.altitudeM)) {
+          minAlt = Math.min(minAlt, point.left.altitudeM)
+          maxAlt = Math.max(maxAlt, point.left.altitudeM)
+        }
+        if (point.right.altitudeM != null && Number.isFinite(point.right.altitudeM)) {
+          minAlt = Math.min(minAlt, point.right.altitudeM)
+          maxAlt = Math.max(maxAlt, point.right.altitudeM)
+        }
+      }
+    }
+
+    if (!Number.isFinite(minAlt)) return null
+
+    return { minAlt, maxAlt }
+  }, [lapDataByLap, selectedLaps, trackMap])
 
   const centerLat = useMemo(() => {
     if (!bounds) return 0
@@ -74,7 +130,12 @@ export function TrackMap3D({
     return (bounds.minLon + bounds.maxLon) / 2
   }, [bounds])
 
-  const gpsTo3D = useCallback((lat: number, lon: number, speedKmh: number | null = null): THREE.Vector3 => {
+  const gpsTo3D = useCallback((
+    lat: number,
+    lon: number,
+    altitudeM: number | null = null,
+    speedKmh: number | null = null,
+  ): THREE.Vector3 => {
     if (!bounds) return new THREE.Vector3(0, 0, 0)
 
     const latRange = bounds.maxLat - bounds.minLat || 0.001
@@ -92,34 +153,88 @@ export function TrackMap3D({
     if (flipX) x = -x
     if (flipY) z = -z
 
-    const elevation = speedKmh != null ? Math.max(0, (speedKmh / 300) * 20) : 0
+    const altitudeBase = altitudeBounds?.minAlt ?? 0
+    const altitudeScale = scale / 111000
+    const altitudeValue =
+      altitudeM != null && Number.isFinite(altitudeM)
+        ? (altitudeM - altitudeBase) * altitudeScale
+        : null
+    const elevation =
+      altitudeValue != null ? altitudeValue : speedKmh != null ? Math.max(0, (speedKmh / 300) * 20) : 0
 
     return new THREE.Vector3(x, elevation, z)
-  }, [bounds, centerLat, centerLon, flipX, flipY])
+  }, [bounds, centerLat, centerLon, flipX, flipY, altitudeBounds])
 
-  const createTrackGeometry = useCallback((points: IbtLapPoint[]): THREE.BufferGeometry | null => {
+  const centerlinePoints = useMemo(() => {
+    if (!trackMap) return []
+    return trackMap.points.map((point) => ({
+      distanceKm: point.distanceKm,
+      lat: (point.left.lat + point.right.lat) / 2,
+      lon: (point.left.lon + point.right.lon) / 2,
+      altitudeM:
+        point.left.altitudeM != null && point.right.altitudeM != null
+          ? (point.left.altitudeM + point.right.altitudeM) / 2
+          : point.left.altitudeM ?? point.right.altitudeM ?? null,
+    }))
+  }, [trackMap])
+
+  const centerlineVectors = useMemo(() => {
+    if (!bounds || centerlinePoints.length === 0) return []
+    return centerlinePoints.map((point) => gpsTo3D(point.lat, point.lon, point.altitudeM))
+  }, [bounds, centerlinePoints, gpsTo3D])
+
+  const cornerPoints = useMemo<TrackMapCorner[]>(() => {
+    return trackMap?.corners ?? []
+  }, [trackMap])
+
+  const createTrackGeometry = useCallback((points: IbtLapPoint[]): {
+    geometry: THREE.BufferGeometry
+    curve: THREE.CatmullRomCurve3
+    tubeSegments: number
+  } | null => {
     const validPoints = points.filter((p) => p.lat != null && p.lon != null)
     if (validPoints.length < 2) return null
 
+    const vectors = validPoints.map((p) => gpsTo3D(p.lat!, p.lon!, p.altitudeM, p.speedKmh))
+    const curve = new THREE.CatmullRomCurve3(vectors, false, "centripetal")
+    const sampleCount = Math.min(1600, Math.max(300, vectors.length * 2))
+    const curvePoints = curve.getPoints(sampleCount)
+    const geometry = new THREE.BufferGeometry().setFromPoints(curvePoints)
+    const tubeSegments = Math.min(1200, Math.max(200, sampleCount))
+
+    return { geometry, curve, tubeSegments }
+  }, [gpsTo3D])
+
+  const createTrackSurfaceGeometry = useCallback((trackData: TrackMapData): THREE.BufferGeometry | null => {
+    if (trackData.points.length < 2) return null
+
     const positions: number[] = []
-    const colors: number[] = []
+    const indices: number[] = []
 
-    for (let i = 0; i < validPoints.length; i++) {
-      const p = validPoints[i]!
-      const pos = gpsTo3D(p.lat!, p.lon!, p.speedKmh)
-      positions.push(pos.x, pos.y, pos.z)
+    for (const point of trackData.points) {
+      const left = gpsTo3D(point.left.lat, point.left.lon, point.left.altitudeM)
+      const right = gpsTo3D(point.right.lat, point.right.lon, point.right.altitudeM)
+      positions.push(left.x, left.y, left.z, right.x, right.y, right.z)
+    }
 
-      const color = new THREE.Color(1, 1, 1)
-      if (p.speedKmh != null) {
-        const speedNormalized = Math.min(1, p.speedKmh / 300)
-        color.setHSL(0.6 - speedNormalized * 0.3, 0.8, 0.5)
-      }
-      colors.push(color.r, color.g, color.b)
+    const segmentCount = trackData.points.length - 1
+    for (let i = 0; i < segmentCount; i++) {
+      const base = i * 2
+      const next = base + 2
+      indices.push(base, base + 1, next)
+      indices.push(base + 1, next + 1, next)
+    }
+
+    if (trackData.points.length > 2) {
+      const last = (trackData.points.length - 1) * 2
+      indices.push(last, last + 1, 0)
+      indices.push(last + 1, 1, 0)
     }
 
     const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3))
+    geometry.setIndex(indices)
+    geometry.computeVertexNormals()
 
     return geometry
   }, [gpsTo3D])
@@ -139,6 +254,10 @@ export function TrackMap3D({
     camera.position.set(0, 500, 1000)
     camera.lookAt(0, 0, 0)
     cameraRef.current = camera
+
+    while (containerRef.current.firstChild) {
+      containerRef.current.removeChild(containerRef.current.firstChild)
+    }
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setSize(width, height)
@@ -290,52 +409,87 @@ export function TrackMap3D({
           containerRef.current.removeChild(rendererRef.current.domElement)
         }
       }
+      if (controlsRef.current) {
+        controlsRef.current.dispose()
+      }
       if (sceneRef.current) {
         sceneRef.current.clear()
       }
+      rendererRef.current = null
+      cameraRef.current = null
+      controlsRef.current = null
+      sceneRef.current = null
+      trackMeshesRef.current = null
+      cursorMeshRef.current = null
+      zoomHighlightRef.current = null
+      surfaceMeshRef.current = null
     }
   }, [initScene, theme])
 
   useEffect(() => {
-    if (!trackMeshesRef.current || !lapDataByLap || selectedLaps.length === 0) return
+    if (!trackMeshesRef.current) return
 
     trackMeshesRef.current.clear()
+    surfaceMeshRef.current = null
 
-    for (let i = 0; i < selectedLaps.length; i++) {
-      const lap = selectedLaps[i]!
-      const lapData = lapDataByLap[lap]
-      if (!lapData) continue
+    if (trackMap) {
+      const surfaceGeometry = createTrackSurfaceGeometry(trackMap)
+      if (surfaceGeometry) {
+        const isDark = theme === "dark"
+        const resolvedSurfaceStyle = surfaceStyle ?? (showLapLines ? "default" : "merged")
+        const surfaceColor = resolvedSurfaceStyle === "merged" ? 0xaeaeae : isDark ? 0x1c1c1c : 0xe4e4e4
+        const surfaceOpacity = resolvedSurfaceStyle === "merged" ? 0.92 : 0.65
+        const surfaceMaterial = new THREE.MeshStandardMaterial({
+          color: surfaceColor,
+          roughness: 0.9,
+          metalness: 0.1,
+          transparent: true,
+          opacity: surfaceOpacity,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
 
-      const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
-      const threeColor = new THREE.Color(color)
+        const surfaceMesh = new THREE.Mesh(surfaceGeometry, surfaceMaterial)
+        surfaceMesh.receiveShadow = true
+        surfaceMesh.name = "track-surface"
+        surfaceMesh.renderOrder = 0
+        surfaceMesh.position.y = 0.2
+        trackMeshesRef.current.add(surfaceMesh)
+        surfaceMeshRef.current = surfaceMesh
+      }
+    }
 
-      // Add a small vertical offset to each lap to separate overlapping lines
-      // We'll stack them slightly in the Y (elevation) axis
-      const verticalOffset = i * 4.0
+    if (showLapLines && lapDataByLap && selectedLaps.length > 0) {
+      for (let i = 0; i < selectedLaps.length; i++) {
+        const lap = selectedLaps[i]!
+        const lapData = lapDataByLap[lap]
+        if (!lapData) continue
 
-      // Always show the full lap line (don't filter by zoom - the yellow overlay handles that)
-      const geometry = createTrackGeometry(lapData.byDist)
-      if (!geometry) continue
+        const color = lapColors[lap] ?? LAP_COLOR_PALETTE[0]
+        const threeColor = new THREE.Color(color)
 
-      const material = new THREE.LineBasicMaterial({
-        color: threeColor,
-        linewidth: 3,
-        vertexColors: false,
-      })
+        // Add a small vertical offset to each lap to separate overlapping lines
+        // We'll stack them slightly in the Y (elevation) axis
+        const verticalOffset = i * 4.0
 
-      const line = new THREE.Line(geometry, material)
-      line.name = `lap-${lap}`
-      line.position.y = verticalOffset
-      trackMeshesRef.current.add(line)
+        // Always show the full lap line (don't filter by zoom - the yellow overlay handles that)
+        const geometryData = createTrackGeometry(lapData.byDist)
+        if (!geometryData) continue
 
-      const validPoints = lapData.byDist
-        .filter((p) => p.lat != null && p.lon != null)
-        .map((p) => gpsTo3D(p.lat!, p.lon!, p.speedKmh))
+        const material = new THREE.LineBasicMaterial({
+          color: threeColor,
+          linewidth: 3,
+          vertexColors: false,
+        })
 
-      if (validPoints.length >= 2) {
+        const line = new THREE.Line(geometryData.geometry, material)
+        line.name = `lap-${lap}`
+        line.renderOrder = 1
+        line.position.y = verticalOffset
+        trackMeshesRef.current.add(line)
+
         try {
-          const curve = new THREE.CatmullRomCurve3(validPoints, false, 'centripetal')
-          const tubeGeometry = new THREE.TubeGeometry(curve, Math.min(200, validPoints.length), 2, 8, false)
+          const tubeGeometry = new THREE.TubeGeometry(geometryData.curve, geometryData.tubeSegments, 2, 8, false)
 
           const tubeMaterial = new THREE.MeshStandardMaterial({
             color: threeColor,
@@ -349,6 +503,7 @@ export function TrackMap3D({
           tube.castShadow = true
           tube.receiveShadow = true
           tube.name = `lap-tube-${lap}`
+          tube.renderOrder = 2
           tube.position.y = verticalOffset
           trackMeshesRef.current.add(tube)
         } catch (error) {
@@ -379,7 +534,7 @@ export function TrackMap3D({
         })
 
         if (sectorPoints.length >= 2) {
-          const validPoints = sectorPoints.map((p) => gpsTo3D(p.lat!, p.lon!, p.speedKmh))
+          const validPoints = sectorPoints.map((p) => gpsTo3D(p.lat!, p.lon!, p.altitudeM, p.speedKmh))
 
           try {
             const curve = new THREE.CatmullRomCurve3(validPoints, false, 'centripetal')
@@ -392,6 +547,8 @@ export function TrackMap3D({
               emissiveIntensity: 1.0,
               metalness: 0.8,
               roughness: 0.2,
+              transparent: true,
+              opacity: 0.3,
             })
 
             const highlightTube = new THREE.Mesh(tubeGeometry, highlightMaterial)
@@ -449,7 +606,58 @@ export function TrackMap3D({
         targetCameraPos.current = new THREE.Vector3(centerPos.x, 600, centerPos.z + 800)
       }
     }
-  }, [lapDataByLap, selectedLaps, lapColors, createTrackGeometry, gpsTo3D, bounds, zoomXMin, zoomXMax, theme])
+    if (cornerPoints.length > 0) {
+      const markerGeometry = new THREE.SphereGeometry(5, 16, 16)
+      const markerMaterial = new THREE.MeshStandardMaterial({
+        color: 0xf49f1e,
+        emissive: 0xf49f1e,
+        emissiveIntensity: 0.6,
+      })
+
+      for (let i = 0; i < cornerPoints.length; i++) {
+        const corner = cornerPoints[i]
+        if (!corner) continue
+        const pos = gpsTo3D(corner.lat, corner.lon, corner.altitudeM)
+        const marker = new THREE.Mesh(markerGeometry, markerMaterial)
+        marker.position.copy(pos)
+        marker.position.y += 8
+        marker.name = "corner-marker"
+        marker.renderOrder = 3
+        trackMeshesRef.current.add(marker)
+
+        const labelCanvas = document.createElement("canvas")
+        labelCanvas.width = 128
+        labelCanvas.height = 128
+        const labelContext = labelCanvas.getContext("2d")
+        if (labelContext) {
+          labelContext.fillStyle = "rgba(16, 16, 16, 0.85)"
+          labelContext.beginPath()
+          labelContext.arc(64, 64, 48, 0, Math.PI * 2)
+          labelContext.fill()
+          labelContext.fillStyle = "#f49f1e"
+          labelContext.font = "bold 64px sans-serif"
+          labelContext.textAlign = "center"
+          labelContext.textBaseline = "middle"
+          labelContext.fillText(String(i + 1), 64, 68)
+
+          const texture = new THREE.CanvasTexture(labelCanvas)
+          const spriteMaterial = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+          })
+          const sprite = new THREE.Sprite(spriteMaterial)
+          sprite.position.copy(pos)
+          sprite.position.y += 22
+          sprite.scale.set(40, 40, 1)
+          sprite.name = "corner-label"
+          sprite.renderOrder = 4
+          trackMeshesRef.current.add(sprite)
+        }
+      }
+    }
+  }, [lapDataByLap, selectedLaps, lapColors, createTrackGeometry, gpsTo3D, bounds, zoomXMin, zoomXMax, theme, trackMap, createTrackSurfaceGeometry, showLapLines, cornerPoints, surfaceStyle])
 
   const validGpsPoints = useMemo(() => {
     if (!lapDataByLap || selectedLaps.length === 0) return []
@@ -533,8 +741,12 @@ export function TrackMap3D({
     const speed = p0.speedKmh != null && p1.speedKmh != null
       ? p0.speedKmh + (p1.speedKmh - p0.speedKmh) * t
       : null
+    const altitudeM =
+      p0.altitudeM != null && p1.altitudeM != null
+        ? p0.altitudeM + (p1.altitudeM - p0.altitudeM) * t
+        : p0.altitudeM ?? p1.altitudeM ?? null
 
-    const pos = gpsTo3D(lat, lon, speed)
+    const pos = gpsTo3D(lat, lon, altitudeM, speed)
 
     cursorMeshRef.current.visible = true
     cursorMeshRef.current.position.copy(pos)
@@ -578,6 +790,44 @@ export function TrackMap3D({
     cursorMeshRef.current.add(glow)
   }, [refLapColor])
 
+  const handleSurfaceClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!onSurfaceClick) return
+    const renderer = rendererRef.current
+    const camera = cameraRef.current
+    const surfaceMesh = surfaceMeshRef.current
+    if (!renderer || !camera || !surfaceMesh || centerlineVectors.length === 0) return
+
+    const rect = renderer.domElement.getBoundingClientRect()
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+    const pointer = new THREE.Vector2(x, y)
+    const raycaster = new THREE.Raycaster()
+    raycaster.setFromCamera(pointer, camera)
+    const intersections = raycaster.intersectObject(surfaceMesh, false)
+    const hit = intersections[0]
+    if (!hit) return
+
+    let closestIndex = 0
+    let closestDistance = Infinity
+    for (let i = 0; i < centerlineVectors.length; i++) {
+      const v = centerlineVectors[i]
+      const dist = v.distanceToSquared(hit.point)
+      if (dist < closestDistance) {
+        closestDistance = dist
+        closestIndex = i
+      }
+    }
+
+    const center = centerlinePoints[closestIndex]
+    if (!center) return
+    onSurfaceClick({
+      distanceKm: center.distanceKm,
+      lat: center.lat,
+      lon: center.lon,
+      altitudeM: center.altitudeM,
+    })
+  }, [onSurfaceClick, centerlineVectors, centerlinePoints])
+
   useEffect(() => {
     const handleResize = () => {
       if (!containerRef.current || !rendererRef.current || !cameraRef.current) return
@@ -594,7 +844,7 @@ export function TrackMap3D({
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  if (!lapDataByLap || selectedLaps.length === 0) {
+  if ((!lapDataByLap || selectedLaps.length === 0) && !trackMap) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-muted/20 rounded-md border border-border/50">
         <div className="text-center">
@@ -605,6 +855,11 @@ export function TrackMap3D({
     )
   }
 
-  return <div ref={containerRef} className="w-full h-full" />
+  return (
+    <div
+      ref={containerRef}
+      className="w-full h-full"
+      onClick={onSurfaceClick ? handleSurfaceClick : undefined}
+    />
+  )
 }
-

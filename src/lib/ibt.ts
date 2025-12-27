@@ -968,6 +968,10 @@ export function parseWeekendInfoFromYaml(yaml: string): IbtWeekendInfo {
 
   const trackID = weekendInfoBlock.match(/TrackID:\s*(\d+)/)
   if (trackID) weekendInfo.trackID = parseInt(trackID[1], 10)
+  if (weekendInfo.trackID == null) {
+    const rootTrackID = yaml.match(/TrackID:\s*(\d+)/)
+    if (rootTrackID) weekendInfo.trackID = parseInt(rootTrackID[1], 10)
+  }
 
   const trackDisplayName = extractYamlValue(weekendInfoBlock, "TrackDisplayName")
   if (trackDisplayName) weekendInfo.trackDisplayName = trackDisplayName

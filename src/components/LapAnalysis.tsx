@@ -27,6 +27,7 @@ import { readIbtHeader, readIbtSamples, readIbtVarHeaders, readIbtSessionInfoYam
 import { createCursorStore, CursorStoreContext } from "@/lib/cursorStore"
 import { formatLapTime } from "@/lib/telemetry-utils"
 import { parseSectorBoundaries, calculateSectorTimes } from "@/lib/sector-utils"
+import { createTrackKey, isTrackMapData } from "@/lib/track-map-utils"
 import type { ChartSeries } from "@/components/telemetry/types"
 import type { LapAnalysisProps } from "@/components/types"
 import { TelemetrySourceInput } from "@/components/lap-analysis/TelemetrySourceInput"
@@ -39,6 +40,7 @@ import { SectorIndicators } from "@/components/lap-analysis/SectorIndicators"
 import { prepareTelemetryData } from "@/components/lap-analysis/telemetry-data-utils"
 import { LAP_COLOR_PALETTE } from "@/components/lap-analysis/constants"
 import type { IbtLapData, IbtLapPoint, SectorBoundary } from "@/components/lap-analysis/types"
+import type { TrackMapData } from "@/components/track/types"
 import { DraggableChart } from "@/components/telemetry/DraggableChart"
 
 // Lazy load chart component for better initial load
@@ -210,6 +212,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
   const [ibtError, setIbtError] = useState<string | null>(null)
   const [sectorBoundaries, setSectorBoundaries] = useState<SectorBoundary[]>([])
   const [weekendInfo, setWeekendInfo] = useState<IbtWeekendInfo | null>(null)
+  const [trackMap, setTrackMap] = useState<TrackMapData | null>(null)
   const [subSessionIds, setSubSessionIds] = useState<number[]>([])
   const [sessionsByNum, setSessionsByNum] = useState<Record<number, import("@/lib/ibt").IbtSessionInfo>>({})
   const [driverCarIdx, setDriverCarIdx] = useState<number | null>(null)
@@ -235,6 +238,66 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
     setZoomXMin(null)
     setZoomXMax(null)
   }, [])
+
+  useEffect(() => {
+    if (!weekendInfo) {
+      setTrackMap(null)
+      return
+    }
+
+    const trackKey = createTrackKey(weekendInfo)
+    const weekendTrackId = weekendInfo.trackID ?? null
+    const weekendConfigName = weekendInfo.trackConfigName ?? null
+
+    if (!trackKey || weekendTrackId == null || weekendConfigName == null) {
+      setTrackMap(null)
+      return
+    }
+
+    const normalizeConfig = (value: string) => value.trim().toLowerCase()
+
+    let active = true
+    const controller = new AbortController()
+
+    const loadTrackMap = async () => {
+      try {
+        const response = await fetch(`/track-maps/${trackKey}.json`, { signal: controller.signal })
+        if (!response.ok) {
+          if (active) setTrackMap(null)
+          return
+        }
+
+        const payload: unknown = await response.json()
+        if (!active) return
+        if (!isTrackMapData(payload)) {
+          setTrackMap(null)
+          return
+        }
+
+        const configMatches =
+          payload.trackConfigName != null &&
+          normalizeConfig(payload.trackConfigName) === normalizeConfig(weekendConfigName)
+        const idMatches = payload.trackId === weekendTrackId
+
+        if (configMatches && idMatches) {
+          setTrackMap(payload)
+        } else {
+          setTrackMap(null)
+        }
+      } catch (error) {
+        if (!active) return
+        if (error instanceof DOMException && error.name === "AbortError") return
+        setTrackMap(null)
+      }
+    }
+
+    loadTrackMap()
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [weekendInfo])
 
   const persistLayout = useCallback((layouts: Layouts, order: ChartId[]) => {
     if (typeof window === "undefined") return
@@ -348,6 +411,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
 
       const hasSessionNum = vars.some(v => v.name.toLowerCase() === "sessionnum")
       const hasPlayerCarIdx = vars.some(v => v.name.toLowerCase() === "playercaridx")
+      const hasAltitude = vars.some(v => v.name.toLowerCase() === "alt")
 
       const recordCount =
         header.diskSubHeader?.recordCount ??
@@ -382,6 +446,9 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
         "LRwearM",
         "RRwearM",
       ]
+      if (hasAltitude) {
+        varNames.push("Alt")
+      }
 
       if (hasSessionNum) {
         varNames.push("SessionNum")
@@ -545,6 +612,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
           steeringDeg: number | null
           lat: number | null
           lon: number | null
+          altitudeM: number | null
           tireTempLF: number | null
           tireTempRF: number | null
           tireTempLR: number | null
@@ -574,6 +642,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
           const steerRad = num(r["SteeringWheelAngle"])
           const lat = typeof r["Lat"] === "number" && Number.isFinite(r["Lat"]) ? r["Lat"] : null
           const lon = typeof r["Lon"] === "number" && Number.isFinite(r["Lon"]) ? r["Lon"] : null
+          const altitudeM = num(r["Alt"])
 
           const tireTempLF = num(r["LFtempM"])
           const tireTempRF = num(r["RFtempM"])
@@ -600,6 +669,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
             steeringDeg: steerRad != null ? (steerRad * 180) / Math.PI : null,
             lat,
             lon,
+            altitudeM,
             tireTempLF,
             tireTempRF,
             tireTempLR,
@@ -655,6 +725,7 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
             steeringDeg: p.steeringDeg,
             lat: p.lat,
             lon: p.lon,
+            altitudeM: p.altitudeM,
             tireTempLF: p.tireTempLF,
             tireTempRF: p.tireTempRF,
             tireTempLR: p.tireTempLR,
@@ -1546,6 +1617,8 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
                           lapColors={lapColors}
                           zoomXMin={zoomXMin}
                           zoomXMax={zoomXMax}
+                          trackMap={trackMap}
+                          surfaceStyle={trackMap ? "merged" : "default"}
                         />
                       </Suspense>
                     ) : (

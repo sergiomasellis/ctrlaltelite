@@ -10,6 +10,7 @@ export type IbtLapPoint = {
   steeringDeg: number | null
   lat: number | null
   lon: number | null
+  altitudeM: number | null
   // Tire data
   tireTempLF: number | null
   tireTempRF: number | null
@@ -47,5 +48,4 @@ export type IbtLapData = {
   sessionNum?: number
   sessionType?: string
 }
-
 
