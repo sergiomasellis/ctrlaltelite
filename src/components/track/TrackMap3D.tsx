@@ -537,31 +537,30 @@ export function TrackMap3D({
           const validPoints = sectorPoints.map((p) => gpsTo3D(p.lat!, p.lon!, p.altitudeM, p.speedKmh))
 
           try {
-            const curve = new THREE.CatmullRomCurve3(validPoints, false, 'centripetal')
-            const tubeGeometry = new THREE.TubeGeometry(curve, Math.min(200, validPoints.length), 4, 8, false)
+            const curve = new THREE.CatmullRomCurve3(validPoints, false, "centripetal")
+            const sampleCount = Math.min(1600, Math.max(300, validPoints.length * 2))
+            const curvePoints = curve.getPoints(sampleCount)
+            const highlightGeometry = new THREE.BufferGeometry().setFromPoints(curvePoints)
 
             const highlightColor = new THREE.Color("#f49f1e")
-            const highlightMaterial = new THREE.MeshStandardMaterial({
+            const highlightMaterial = new THREE.LineBasicMaterial({
               color: highlightColor,
-              emissive: highlightColor,
-              emissiveIntensity: 1.0,
-              metalness: 0.8,
-              roughness: 0.2,
+              linewidth: 3,
               transparent: true,
-              opacity: 0.3,
+              opacity: 0.9,
+              depthTest: false,
+              depthWrite: false,
             })
 
-            const highlightTube = new THREE.Mesh(tubeGeometry, highlightMaterial)
-            highlightTube.castShadow = true
-            highlightTube.receiveShadow = true
-            highlightTube.name = 'zoom-highlight'
-            // Lift the highlight slightly above the stacked lines
-            highlightTube.position.y = (selectedLaps.length * 4.0) + 2.0
-            zoomHighlightRef.current.add(highlightTube)
+            const highlightLine = new THREE.Line(highlightGeometry, highlightMaterial)
+            highlightLine.name = "zoom-highlight"
+            highlightLine.renderOrder = 10
+            highlightLine.position.y = 0.6
+            zoomHighlightRef.current.add(highlightLine)
 
             // Set targets for smooth animation in the animate loop
             if (cameraRef.current && controlsRef.current) {
-              const box = new THREE.Box3().setFromObject(highlightTube)
+              const box = new THREE.Box3().setFromObject(highlightLine)
               const center = new THREE.Vector3()
               box.getCenter(center)
 
@@ -589,7 +588,7 @@ export function TrackMap3D({
               targetCameraPos.current = cameraPos
             }
           } catch (error) {
-            console.warn('Failed to create zoom highlight geometry:', error)
+            console.warn("Failed to create zoom highlight geometry:", error)
           }
         }
       }
