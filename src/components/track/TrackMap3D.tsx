@@ -437,8 +437,8 @@ export function TrackMap3D({
       if (surfaceGeometry) {
         const isDark = theme === "dark"
         const resolvedSurfaceStyle = surfaceStyle ?? (showLapLines ? "default" : "merged")
-        const surfaceColor = resolvedSurfaceStyle === "merged" ? 0xaeaeae : isDark ? 0x1c1c1c : 0xe4e4e4
-        const surfaceOpacity = resolvedSurfaceStyle === "merged" ? 0.92 : 0.65
+        const surfaceColor = resolvedSurfaceStyle === "merged" ? 0x000000 : isDark ? 0x1c1c1c : 0xe4e4e4
+        const surfaceOpacity = resolvedSurfaceStyle === "merged" ? 1 : 0.65
         const surfaceMaterial = new THREE.MeshStandardMaterial({
           color: surfaceColor,
           roughness: 0.9,
@@ -489,7 +489,7 @@ export function TrackMap3D({
         trackMeshesRef.current.add(line)
 
         try {
-          const tubeGeometry = new THREE.TubeGeometry(geometryData.curve, geometryData.tubeSegments, 2, 8, false)
+          const tubeGeometry = new THREE.TubeGeometry(geometryData.curve, geometryData.tubeSegments, 1, 8, false)
 
           const tubeMaterial = new THREE.MeshStandardMaterial({
             color: threeColor,
@@ -500,8 +500,8 @@ export function TrackMap3D({
           })
 
           const tube = new THREE.Mesh(tubeGeometry, tubeMaterial)
-          tube.castShadow = true
-          tube.receiveShadow = true
+          tube.castShadow = false
+          tube.receiveShadow = false
           tube.name = `lap-tube-${lap}`
           tube.renderOrder = 2
           tube.position.y = verticalOffset
@@ -828,19 +828,30 @@ export function TrackMap3D({
   }, [onSurfaceClick, centerlineVectors, centerlinePoints])
 
   useEffect(() => {
-    const handleResize = () => {
-      if (!containerRef.current || !rendererRef.current || !cameraRef.current) return
+    const container = containerRef.current
+    if (!container) return
 
-      const width = containerRef.current.clientWidth
-      const height = containerRef.current.clientHeight
+    const handleResize = () => {
+      if (!rendererRef.current || !cameraRef.current) return
+
+      const width = container.clientWidth
+      const height = container.clientHeight
 
       cameraRef.current.aspect = width / height
       cameraRef.current.updateProjectionMatrix()
       rendererRef.current.setSize(width, height)
     }
 
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    handleResize()
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", handleResize)
+      return () => window.removeEventListener("resize", handleResize)
+    }
+
+    const observer = new ResizeObserver(() => handleResize())
+    observer.observe(container)
+    return () => observer.disconnect()
   }, [])
 
   if ((!lapDataByLap || selectedLaps.length === 0) && !trackMap) {

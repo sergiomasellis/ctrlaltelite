@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { readIbtHeader, readIbtSamples, readIbtVarHeaders, readIbtSessionInfoYaml, parseSessionsFromYaml, parseWeekendInfoFromYaml, type IbtValue, type IbtWeekendInfo } from "@/lib/ibt"
 import { createCursorStore, CursorStoreContext } from "@/lib/cursorStore"
 import { formatLapTime } from "@/lib/telemetry-utils"
@@ -1595,61 +1596,74 @@ export function LapAnalysis({ initialFiles, onBackToStart }: LapAnalysisProps = 
             <div className="flex flex-1 overflow-hidden">
               {/* Left: Track map and legend */}
               <div className="flex flex-col w-[300px] border-r border-border/40 bg-background/30 backdrop-blur-sm transition-all duration-300">
-                {/* Track map */}
-                <div className="relative flex-shrink-0 h-64 border-b border-border/40 bg-gradient-to-b from-background/50 to-background/20">
-                  <div className="absolute left-4 top-4 z-10">
-                    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-background/80 backdrop-blur-md border border-border/40 shadow-sm">
-                      <MapIcon className="h-3.5 w-3.5 text-primary" />
-                      <span className="text-[10px] font-bold text-foreground/80 uppercase tracking-widest">Track Map</span>
-                    </div>
-                  </div>
-                  <div className="w-full h-full p-2">
-                    {ibtLapDataByLap ? (
-                      <Suspense fallback={
-                        <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
-                          <div className="h-5 w-5 border-2 border-primary/50 border-t-transparent rounded-full animate-spin mr-2" />
-                          Loading map...
+                {ibtLapDataByLap && (
+                  <ResizablePanelGroup orientation="vertical" className="h-full">
+                    <ResizablePanel defaultSize={42} minSize={25}>
+                      <div className="relative flex h-full flex-col bg-gradient-to-b from-background/50 to-background/20">
+                        <div className="absolute left-4 top-4 z-10">
+                          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-background/80 backdrop-blur-md border border-border/40 shadow-sm">
+                            <MapIcon className="h-3.5 w-3.5 text-primary" />
+                            <span className="text-[10px] font-bold text-foreground/80 uppercase tracking-widest">Track Map</span>
+                          </div>
                         </div>
-                      }>
-                        <TrackMap
-                          lapDataByLap={ibtLapDataByLap}
-                          selectedLaps={selectedLaps}
-                          lapColors={lapColors}
-                          zoomXMin={zoomXMin}
-                          zoomXMax={zoomXMax}
-                          trackMap={trackMap}
-                          surfaceStyle={trackMap ? "merged" : "default"}
-                        />
-                      </Suspense>
-                    ) : (
+                        <div className="w-full h-full p-2">
+                          <Suspense fallback={
+                            <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
+                              <div className="h-5 w-5 border-2 border-primary/50 border-t-transparent rounded-full animate-spin mr-2" />
+                              Loading map...
+                            </div>
+                          }>
+                            <TrackMap
+                              lapDataByLap={ibtLapDataByLap}
+                              selectedLaps={selectedLaps}
+                              lapColors={lapColors}
+                              zoomXMin={zoomXMin}
+                              zoomXMax={zoomXMax}
+                              trackMap={trackMap}
+                              surfaceStyle={trackMap ? "merged" : "default"}
+                            />
+                          </Suspense>
+                        </div>
+                      </div>
+                    </ResizablePanel>
+                    <ResizableHandle withHandle />
+                    <ResizablePanel defaultSize={58} minSize={25}>
+                      <div className="flex h-full flex-col overflow-y-auto p-2 gap-2">
+                        <div className="flex-shrink-0 rounded-xl border border-border/30 bg-card/20 p-1">
+                          <LapComparisonLegend
+                            selectedLaps={selectedLaps}
+                            lapDataByLap={ibtLapDataByLap}
+                            lapColors={lapColors}
+                            sectorBoundaries={sectorBoundaries}
+                          />
+                        </div>
+                        <div className="flex-shrink-0 rounded-xl border border-border/30 bg-card/20 overflow-hidden shadow-sm hover:shadow-md transition-all">
+                          <SectorTimesTable
+                            selectedLaps={selectedLaps}
+                            lapDataByLap={ibtLapDataByLap}
+                            lapColors={lapColors}
+                            sectorBoundaries={sectorBoundaries}
+                          />
+                        </div>
+                      </div>
+                    </ResizablePanel>
+                  </ResizablePanelGroup>
+                )}
+                {!ibtLapDataByLap && (
+                  <div className="relative flex-shrink-0 h-64 border-b border-border/40 bg-gradient-to-b from-background/50 to-background/20">
+                    <div className="absolute left-4 top-4 z-10">
+                      <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-background/80 backdrop-blur-md border border-border/40 shadow-sm">
+                        <MapIcon className="h-3.5 w-3.5 text-primary" />
+                        <span className="text-[10px] font-bold text-foreground/80 uppercase tracking-widest">Track Map</span>
+                      </div>
+                    </div>
+                    <div className="w-full h-full p-2">
                       <div className="w-full h-full flex items-center justify-center">
                         <div className="text-center md:opacity-50">
                           <MapIcon className="h-10 w-10 mx-auto mb-2 text-muted-foreground/30" />
                           <p className="text-xs text-muted-foreground/50 uppercase tracking-widest">No Data</p>
                         </div>
                       </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Legend and Sector Times */}
-                {ibtLapDataByLap && (
-                  <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
-                    <div className="flex-shrink-0 rounded-xl border border-border/30 bg-card/20 p-1">
-                      <LapComparisonLegend
-                        selectedLaps={selectedLaps}
-                        lapDataByLap={ibtLapDataByLap}
-                        lapColors={lapColors}
-                        sectorBoundaries={sectorBoundaries}
-                      />
-                    </div>
-                    <div className="flex-shrink-0 rounded-xl border border-border/30 bg-card/20 overflow-hidden shadow-sm hover:shadow-md transition-all">
-                      <SectorTimesTable
-                        selectedLaps={selectedLaps}
-                        lapDataByLap={ibtLapDataByLap}
-                        lapColors={lapColors}
-                        sectorBoundaries={sectorBoundaries}
-                      />
                     </div>
                   </div>
                 )}
